@@ -78,6 +78,15 @@ export const agents: Record<AgentType, AgentConfig> = {
       return existsSync(join(home, '.config/goose'));
     },
   },
+  antigravity: {
+    name: 'antigravity',
+    displayName: 'Antigravity',
+    skillsDir: '.agent/skills',
+    globalSkillsDir: join(home, '.gemini/antigravity/skills'),
+    detectInstalled: async () => {
+      return existsSync(join(process.cwd(), '.agent')) || existsSync(join(home, '.gemini/antigravity'));
+    },
+  },
 };
 
 export async function detectInstalledAgents(): Promise<AgentType[]> {

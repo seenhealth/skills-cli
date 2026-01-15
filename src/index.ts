@@ -21,7 +21,7 @@ interface Options {
 
 program
   .name('add-skill')
-  .description('Install skills onto coding agents (OpenCode, Claude Code, Codex, Cursor)')
+  .description('Install skills onto coding agents (OpenCode, Claude Code, Codex, Cursor, Antigravity)')
   .version(version)
   .argument('<source>', 'Git repo URL, GitHub shorthand (owner/repo), or direct path to skill')
   .option('-g, --global', 'Install skill globally (user-level) instead of project-level')
@@ -131,7 +131,7 @@ async function main(source: string, options: Options) {
     let targetAgents: AgentType[];
 
     if (options.agent && options.agent.length > 0) {
-      const validAgents = ['opencode', 'claude-code', 'codex', 'cursor'];
+      const validAgents = ['opencode', 'claude-code', 'codex', 'cursor', 'antigravity'];
       const invalidAgents = options.agent.filter(a => !validAgents.includes(a));
 
       if (invalidAgents.length > 0) {
@@ -149,7 +149,7 @@ async function main(source: string, options: Options) {
 
       if (installedAgents.length === 0) {
         if (options.yes) {
-          targetAgents = ['opencode', 'claude-code', 'codex', 'cursor'];
+          targetAgents = ['opencode', 'claude-code', 'codex', 'cursor', 'antigravity'];
           p.log.info('Installing to all agents (none detected)');
         } else {
           p.log.warn('No coding agents detected. You can still install skills.');

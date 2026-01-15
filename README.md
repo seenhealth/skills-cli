@@ -2,7 +2,7 @@
 
 Install agent skills onto your coding agents from any git repository.
 
-Supports [OpenCode](https://opencode.ai), [Claude Code](https://claude.ai/code), [Codex](https://developers.openai.com/codex), and [Cursor](https://cursor.com).
+Supports [OpenCode](https://opencode.ai), [Claude Code](https://claude.ai/code), [Codex](https://developers.openai.com/codex), [Cursor](https://cursor.com), and [Antigravity](https://antigravity.google).
 
 ## Quick Start
 
@@ -47,7 +47,7 @@ npx add-skill git@github.com:vercel-labs/agent-skills.git
 | Option | Description |
 |--------|-------------|
 | `-g, --global` | Install to user directory instead of project |
-| `-a, --agent <agents...>` | Target specific agents: `opencode`, `claude-code`, `codex`, `cursor` |
+| `-a, --agent <agents...>` | Target specific agents: `opencode`, `claude-code`, `codex`, `cursor`, `antigravity` |
 | `-s, --skill <skills...>` | Install specific skills by name |
 | `-l, --list` | List available skills without installing |
 | `-y, --yes` | Skip all confirmation prompts |
@@ -87,6 +87,7 @@ Installed in your current working directory. Commit these to share with your tea
 | Claude Code | `.claude/skills/<name>/` |
 | Codex | `.codex/skills/<name>/` |
 | Cursor | `.cursor/skills/<name>/` |
+| Antigravity | `.agent/skills/<name>/` |
 
 ### Global (`--global`)
 
@@ -98,6 +99,7 @@ Installed in your home directory. Available across all projects.
 | Claude Code | `~/.claude/skills/<name>/` |
 | Codex | `~/.codex/skills/<name>/` |
 | Cursor | `~/.cursor/skills/<name>/` |
+| Antigravity | `~/.gemini/antigravity/skills/<name>/` |
 
 ## Agent Detection
 
@@ -145,6 +147,7 @@ The CLI searches for skills in these locations within a repository:
 - `.claude/skills/`
 - `.opencode/skill/`
 - `.cursor/skills/`
+- `.agent/skills/`
 
 If no skills are found in standard locations, a recursive search is performed.
 
@@ -152,12 +155,12 @@ If no skills are found in standard locations, a recursive search is performed.
 
 Skills are generally compatible across agents since they follow a shared [Agent Skills specification](https://agentskills.io). However, some features may be agent-specific:
 
-| Feature | OpenCode | Claude Code | Codex | Cursor |
-|---------|----------|-------------|-------|--------|
-| Basic skills | Yes | Yes | Yes | Yes |
-| `allowed-tools` | Yes | Yes | Yes | Yes |
-| `context: fork` | No | Yes | No | No |
-| Hooks | No | Yes | No | No |
+| Feature | OpenCode | Claude Code | Codex | Cursor | Antigravity |
+|---------|----------|-------------|-------|--------|-------------|
+| Basic skills | Yes | Yes | Yes | Yes | Yes |
+| `allowed-tools` | Yes | Yes | Yes | Yes | Yes |
+| `context: fork` | No | Yes | No | No | No |
+| Hooks | No | Yes | No | No | No |
 
 ## Troubleshooting
 
@@ -179,10 +182,11 @@ Ensure you have write access to the target directory.
 
 - [Vercel Agent Skills Repository](https://github.com/vercel-labs/agent-skills)
 - [Agent Skills Specification](https://agentskills.io)
-- [OpenCode Skills Documentation](https://opencode.ai/docs/skills/)
+- [OpenCode Skills Documentation](https://opencode.ai/docs/skills)
 - [Claude Code Skills Documentation](https://code.claude.com/docs/en/skills)
-- [Codex Skills Documentation](https://developers.openai.com/codex/skills/)
+- [Codex Skills Documentation](https://developers.openai.com/codex/skills)
 - [Cursor Skills Documentation](https://cursor.com/docs/context/skills)
+- [Antigravity Skills Documentation](https://antigravity.google/docs/skills)
 
 ## License
 
