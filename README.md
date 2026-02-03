@@ -3,7 +3,7 @@
 The CLI for the open agent skills ecosystem.
 
 <!-- agent-list:start -->
-Supports **OpenCode**, **Claude Code**, **Codex**, **Cursor**, and [36 more](#available-agents).
+Supports **OpenCode**, **Claude Code**, **Codex**, **Cursor**, and [35 more](#available-agents).
 <!-- agent-list:end -->
 
 ## Install a Skill
@@ -206,43 +206,46 @@ Discover skills at **[skills.sh](https://skills.sh)**
 Skills can be installed to any of these agents:
 
 <!-- supported-agents:start -->
-
-| Agent              | `--agent`         | Project Path           | Global Path                            |
-| ------------------ | ----------------- | ---------------------- | -------------------------------------- |
-| Amp, Kimi Code CLI | `amp`, `kimi-cli` | `.agents/skills/`      | `~/.config/agents/skills/`             |
-| Antigravity        | `antigravity`     | `.agent/skills/`       | `~/.gemini/antigravity/global_skills/` |
-| Claude Code        | `claude-code`     | `.claude/skills/`      | `~/.claude/skills/`                    |
-| Moltbot            | `moltbot`         | `skills/`              | `~/.moltbot/skills/`                   |
-| Cline              | `cline`           | `.cline/skills/`       | `~/.cline/skills/`                     |
-| CodeBuddy          | `codebuddy`       | `.codebuddy/skills/`   | `~/.codebuddy/skills/`                 |
-| Codex              | `codex`           | `.codex/skills/`       | `~/.codex/skills/`                     |
-| Command Code       | `command-code`    | `.commandcode/skills/` | `~/.commandcode/skills/`               |
-| Continue           | `continue`        | `.continue/skills/`    | `~/.continue/skills/`                  |
-| Crush              | `crush`           | `.crush/skills/`       | `~/.config/crush/skills/`              |
-| Cursor             | `cursor`          | `.cursor/skills/`      | `~/.cursor/skills/`                    |
-| Droid              | `droid`           | `.factory/skills/`     | `~/.factory/skills/`                   |
-| Gemini CLI         | `gemini-cli`      | `.gemini/skills/`      | `~/.gemini/skills/`                    |
-| GitHub Copilot     | `github-copilot`  | `.github/skills/`      | `~/.copilot/skills/`                   |
-| Goose              | `goose`           | `.goose/skills/`       | `~/.config/goose/skills/`              |
-| Junie              | `junie`           | `.junie/skills/`       | `~/.junie/skills/`                     |
-| Kilo Code          | `kilo`            | `.kilocode/skills/`    | `~/.kilocode/skills/`                  |
-| Kiro CLI           | `kiro-cli`        | `.kiro/skills/`        | `~/.kiro/skills/`                      |
-| Kode               | `kode`            | `.kode/skills/`        | `~/.kode/skills/`                      |
-| MCPJam             | `mcpjam`          | `.mcpjam/skills/`      | `~/.mcpjam/skills/`                    |
-| Mux                | `mux`             | `.mux/skills/`         | `~/.mux/skills/`                       |
-| OpenCode           | `opencode`        | `.opencode/skills/`    | `~/.config/opencode/skills/`           |
-| OpenHands          | `openhands`       | `.openhands/skills/`   | `~/.openhands/skills/`                 |
-| Pi                 | `pi`              | `.pi/skills/`          | `~/.pi/agent/skills/`                  |
-| Qoder              | `qoder`           | `.qoder/skills/`       | `~/.qoder/skills/`                     |
-| Qwen Code          | `qwen-code`       | `.qwen/skills/`        | `~/.qwen/skills/`                      |
-| Roo Code           | `roo`             | `.roo/skills/`         | `~/.roo/skills/`                       |
-| Trae               | `trae`            | `.trae/skills/`        | `~/.trae/skills/`                      |
-| Trae CN            | `trae-cn`         | `.trae/skills/`        | `~/.trae-cn/skills/`                   |
-| Windsurf           | `windsurf`        | `.windsurf/skills/`    | `~/.codeium/windsurf/skills/`          |
-| Zencoder           | `zencoder`        | `.zencoder/skills/`    | `~/.zencoder/skills/`                  |
-| Neovate            | `neovate`         | `.neovate/skills/`     | `~/.neovate/skills/`                   |
-| Pochi              | `pochi`           | `.pochi/skills/`       | `~/.pochi/skills/`                     |
-
+| Agent | `--agent` | Project Path | Global Path |
+|-------|-----------|--------------|-------------|
+| Amp, Kimi Code CLI | `amp`, `kimi-cli` | `.agents/skills/` | `~/.config/agents/skills/` |
+| Antigravity | `antigravity` | `.agent/skills/` | `~/.gemini/antigravity/skills/` |
+| Augment | `augment` | `.augment/rules/` | `~/.augment/rules/` |
+| Claude Code | `claude-code` | `.claude/skills/` | `~/.claude/skills/` |
+| OpenClaw | `openclaw` | `skills/` | `~/.moltbot/skills/` |
+| Cline | `cline` | `.cline/skills/` | `~/.cline/skills/` |
+| CodeBuddy | `codebuddy` | `.codebuddy/skills/` | `~/.codebuddy/skills/` |
+| Codex | `codex` | `.codex/skills/` | `~/.codex/skills/` |
+| Command Code | `command-code` | `.commandcode/skills/` | `~/.commandcode/skills/` |
+| Continue | `continue` | `.continue/skills/` | `~/.continue/skills/` |
+| Crush | `crush` | `.crush/skills/` | `~/.config/crush/skills/` |
+| Cursor | `cursor` | `.cursor/skills/` | `~/.cursor/skills/` |
+| Droid | `droid` | `.factory/skills/` | `~/.factory/skills/` |
+| Gemini CLI | `gemini-cli` | `.gemini/skills/` | `~/.gemini/skills/` |
+| GitHub Copilot | `github-copilot` | `.github/skills/` | `~/.copilot/skills/` |
+| Goose | `goose` | `.goose/skills/` | `~/.config/goose/skills/` |
+| Junie | `junie` | `.junie/skills/` | `~/.junie/skills/` |
+| iFlow CLI | `iflow-cli` | `.iflow/skills/` | `~/.iflow/skills/` |
+| Kilo Code | `kilo` | `.kilocode/skills/` | `~/.kilocode/skills/` |
+| Kiro CLI | `kiro-cli` | `.kiro/skills/` | `~/.kiro/skills/` |
+| Kode | `kode` | `.kode/skills/` | `~/.kode/skills/` |
+| MCPJam | `mcpjam` | `.mcpjam/skills/` | `~/.mcpjam/skills/` |
+| Mistral Vibe | `mistral-vibe` | `.vibe/skills/` | `~/.vibe/skills/` |
+| Mux | `mux` | `.mux/skills/` | `~/.mux/skills/` |
+| OpenCode | `opencode` | `.opencode/skills/` | `~/.config/opencode/skills/` |
+| OpenHands | `openhands` | `.openhands/skills/` | `~/.openhands/skills/` |
+| Pi | `pi` | `.pi/skills/` | `~/.pi/agent/skills/` |
+| Qoder | `qoder` | `.qoder/skills/` | `~/.qoder/skills/` |
+| Qwen Code | `qwen-code` | `.qwen/skills/` | `~/.qwen/skills/` |
+| Replit | `replit` | `.agent/skills/` | N/A (project-only) |
+| Roo Code | `roo` | `.roo/skills/` | `~/.roo/skills/` |
+| Trae | `trae` | `.trae/skills/` | `~/.trae/skills/` |
+| Trae CN | `trae-cn` | `.trae/skills/` | `~/.trae-cn/skills/` |
+| Windsurf | `windsurf` | `.windsurf/skills/` | `~/.codeium/windsurf/skills/` |
+| Zencoder | `zencoder` | `.zencoder/skills/` | `~/.zencoder/skills/` |
+| Neovate | `neovate` | `.neovate/skills/` | `~/.neovate/skills/` |
+| Pochi | `pochi` | `.pochi/skills/` | `~/.pochi/skills/` |
+| AdaL | `adal` | `.adal/skills/` | `~/.adal/skills/` |
 <!-- supported-agents:end -->
 
 > [!NOTE]
@@ -337,7 +340,6 @@ The CLI searches for skills in these locations within a repository:
 - `.vibe/skills/`
 - `.mux/skills/`
 - `.opencode/skills/`
-- `.openclaude/skills/`
 - `.openhands/skills/`
 - `.pi/skills/`
 - `.qoder/skills/`
