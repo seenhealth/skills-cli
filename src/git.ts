@@ -1,7 +1,8 @@
 import simpleGit from 'simple-git';
 import { join, normalize, resolve, sep } from 'path';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, access, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
+import { getReposDir } from './constants.ts';
 
 const CLONE_TIMEOUT_MS = 60000; // 60 seconds
 
@@ -77,4 +78,183 @@ export async function cleanupTempDir(dir: string): Promise<void> {
   }
 
   await rm(dir, { recursive: true, force: true });
+}
+
+// ─── Persistent Repo Management ───
+
+/**
+ * Normalize a git URL to a filesystem-safe path.
+ * - https://github.com/owner/repo.git → github.com/owner/repo
+ * - git@github.com:owner/repo.git → github.com/owner/repo
+ * - ssh://git@github.com/owner/repo → github.com/owner/repo
+ */
+export function normalizeGitUrl(url: string): string {
+  let normalized = url;
+
+  // Handle SSH URLs: git@github.com:owner/repo.git
+  const sshMatch = normalized.match(/^git@([^:]+):(.+)$/);
+  if (sshMatch) {
+    normalized = `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  // Handle protocol prefixes: https://, ssh://, git://
+  normalized = normalized.replace(/^(?:https?|ssh|git):\/\//, '');
+
+  // Remove userinfo (e.g., git@)
+  normalized = normalized.replace(/^[^@]+@/, '');
+
+  // Remove .git suffix
+  normalized = normalized.replace(/\.git$/, '');
+
+  // Remove trailing slashes
+  normalized = normalized.replace(/\/+$/, '');
+
+  return normalized;
+}
+
+/**
+ * Get the local checkout path for a repo.
+ * Returns ~/.agents/repos/<normalized> or ~/.agents/repos/<normalized>@<ref> if ref is specified.
+ */
+export function getRepoCheckoutPath(url: string, ref?: string): string {
+  const normalized = normalizeGitUrl(url);
+  const dirName = ref ? `${normalized}@${ref}` : normalized;
+  return join(getReposDir(), dirName);
+}
+
+/**
+ * Check if a directory exists.
+ */
+async function dirExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure a repo is checked out and up to date.
+ * - If the repo already exists locally, fetches and updates.
+ * - If not, clones it with blobless filter for space efficiency.
+ * Returns the local checkout path.
+ */
+export async function ensureRepoCheckout(
+  url: string,
+  options?: { ref?: string }
+): Promise<string> {
+  const checkoutPath = getRepoCheckoutPath(url, options?.ref);
+
+  if (await dirExists(join(checkoutPath, '.git'))) {
+    // Repo already exists — fetch and update
+    const git = simpleGit(checkoutPath, { timeout: { block: CLONE_TIMEOUT_MS } });
+    try {
+      await git.fetch(['origin']);
+      if (options?.ref) {
+        await git.checkout(options.ref);
+        // Try to pull if on a branch (will fail for tags/detached HEAD, which is fine)
+        try {
+          await git.pull('origin', options.ref);
+        } catch {
+          // Detached HEAD or tag — checkout is sufficient
+        }
+      } else {
+        await git.pull();
+      }
+    } catch (error) {
+      // If fetch/pull fails (e.g., network down), the local checkout is still valid
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Only throw if this is an auth error — network errors are acceptable for offline use
+      const isAuthError =
+        errorMessage.includes('Authentication failed') ||
+        errorMessage.includes('could not read Username') ||
+        errorMessage.includes('Permission denied') ||
+        errorMessage.includes('Repository not found');
+      if (isAuthError) {
+        throw new GitCloneError(
+          `Authentication failed for ${url}.`,
+          url,
+          false,
+          true
+        );
+      }
+      // Otherwise, silently use the existing checkout
+    }
+    return checkoutPath;
+  }
+
+  // Clone fresh — use blobless clone for space efficiency while supporting git pull
+  await mkdir(checkoutPath, { recursive: true });
+  const git = simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } });
+  const cloneOptions = ['--filter=blob:none'];
+  if (options?.ref) {
+    cloneOptions.push('--branch', options.ref);
+  }
+
+  try {
+    await git.clone(url, checkoutPath, cloneOptions);
+    return checkoutPath;
+  } catch (error) {
+    // Clean up on failure
+    await rm(checkoutPath, { recursive: true, force: true }).catch(() => {});
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isTimeout =
+      errorMessage.includes('block timeout') || errorMessage.includes('timed out');
+    const isAuthError =
+      errorMessage.includes('Authentication failed') ||
+      errorMessage.includes('could not read Username') ||
+      errorMessage.includes('Permission denied') ||
+      errorMessage.includes('Repository not found');
+
+    if (isTimeout) {
+      throw new GitCloneError(
+        `Clone timed out after 60s. This often happens with private repos that require authentication.\n` +
+          `  Ensure you have access and your SSH keys or credentials are configured:\n` +
+          `  - For SSH: ssh-add -l (to check loaded keys)\n` +
+          `  - For HTTPS: gh auth status (if using GitHub CLI)`,
+        url,
+        true,
+        false
+      );
+    }
+
+    if (isAuthError) {
+      throw new GitCloneError(
+        `Authentication failed for ${url}.\n` +
+          `  - For private repos, ensure you have access\n` +
+          `  - For SSH: Check your keys with 'ssh -T git@github.com'\n` +
+          `  - For HTTPS: Run 'gh auth login' or configure git credentials`,
+        url,
+        false,
+        true
+      );
+    }
+
+    throw new GitCloneError(`Failed to clone ${url}: ${errorMessage}`, url, false, false);
+  }
+}
+
+/**
+ * Pull latest changes for a persistent repo checkout.
+ * Returns whether any changes were fetched.
+ */
+export async function pullRepo(
+  repoDir: string
+): Promise<{ updated: boolean }> {
+  const git = simpleGit(repoDir, { timeout: { block: CLONE_TIMEOUT_MS } });
+
+  try {
+    // Get current HEAD before pull
+    const beforeHash = await git.revparse(['HEAD']);
+    await git.fetch(['origin']);
+    await git.pull();
+    const afterHash = await git.revparse(['HEAD']);
+
+    return { updated: beforeHash !== afterHash };
+  } catch {
+    // If pull fails, report no update (repo still usable locally)
+    return { updated: false };
+  }
 }
