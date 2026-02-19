@@ -11,7 +11,14 @@ import { runFind } from './find.ts';
 import { runList } from './list.ts';
 import { removeCommand, parseRemoveOptions } from './remove.ts';
 import { track } from './telemetry.ts';
-import { fetchSkillFolderHash, getGitHubToken } from './skill-lock.ts';
+import {
+  fetchSkillFolderHash,
+  getGitHubToken,
+  getOrphanedRepos,
+  removeRepoFromLock,
+} from './skill-lock.ts';
+import { pullRepo, getRepoCheckoutPath } from './git.ts';
+import { getReposDir } from './constants.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -86,6 +93,9 @@ function showBanner(): void {
   console.log(
     `  ${DIM}$${RESET} ${TEXT}npx skills init ${DIM}[name]${RESET}     ${DIM}Create a new skill${RESET}`
   );
+  console.log(
+    `  ${DIM}$${RESET} ${TEXT}npx skills gc${RESET}              ${DIM}Remove unused repo checkouts${RESET}`
+  );
   console.log();
   console.log(`${DIM}try:${RESET} npx skills add vercel-labs/agent-skills`);
   console.log();
@@ -107,6 +117,7 @@ ${BOLD}Commands:${RESET}
   init [name]       Initialize a skill (creates <name>/SKILL.md or ./SKILL.md)
   check             Check for available skill updates
   update            Update all skills to latest versions
+  gc                Remove unused repo checkouts
 
 ${BOLD}Add Options:${RESET}
   -g, --global           Install skill globally (user-level) instead of project-level
@@ -254,7 +265,7 @@ Describe when this skill should be used.
 const AGENTS_DIR = '.agents';
 const LOCK_FILE = '.skill-lock.json';
 const CHECK_UPDATES_API_URL = 'https://add-skill.vercel.sh/check-updates';
-const CURRENT_LOCK_VERSION = 3; // Bumped from 2 to 3 for folder hash support
+const CURRENT_LOCK_VERSION = 4; // Bumped from 3 to 4 for persistent repo checkout support
 
 interface SkillLockEntry {
   source: string;
@@ -265,11 +276,22 @@ interface SkillLockEntry {
   skillFolderHash: string;
   installedAt: string;
   updatedAt: string;
+  ref?: string;
+  installMethod?: 'repo-symlink' | 'copy';
+  repoPath?: string;
+}
+
+interface RepoEntry {
+  url: string;
+  ref?: string;
+  skills: string[];
+  lastFetched: string;
 }
 
 interface SkillLockFile {
   version: number;
   skills: Record<string, SkillLockEntry>;
+  repos?: Record<string, RepoEntry>;
 }
 
 interface CheckUpdatesRequest {
@@ -307,9 +329,13 @@ function readSkillLock(): SkillLockFile {
     if (typeof parsed.version !== 'number' || !parsed.skills) {
       return { version: CURRENT_LOCK_VERSION, skills: {} };
     }
-    // If old version, wipe and start fresh (backwards incompatible change)
-    // v3 adds skillFolderHash - we want fresh installs to populate it
-    if (parsed.version < CURRENT_LOCK_VERSION) {
+    // Migrate v3 → v4: preserve existing data
+    if (parsed.version === 3) {
+      parsed.version = CURRENT_LOCK_VERSION;
+      return parsed;
+    }
+    // Wipe if version is too old (< 3)
+    if (parsed.version < 3) {
       return { version: CURRENT_LOCK_VERSION, skills: {} };
     }
     return parsed;
@@ -442,94 +468,131 @@ async function runUpdate(): Promise<void> {
     return;
   }
 
-  // Get GitHub token from user's environment for higher rate limits
-  const token = getGitHubToken();
-
-  // Find skills that need updates by checking GitHub directly
-  const updates: Array<{ name: string; source: string; entry: SkillLockEntry }> = [];
-  let checkedCount = 0;
+  const repoBackedSkills: Array<{ name: string; entry: SkillLockEntry }> = [];
+  const legacySkills: Array<{ name: string; entry: SkillLockEntry }> = [];
 
   for (const skillName of skillNames) {
     const entry = lock.skills[skillName];
     if (!entry) continue;
 
-    // Only check GitHub-sourced skills with folder hash
-    if (entry.sourceType !== 'github' || !entry.skillFolderHash || !entry.skillPath) {
-      continue;
-    }
-
-    checkedCount++;
-
-    try {
-      const latestHash = await fetchSkillFolderHash(entry.source, entry.skillPath, token);
-
-      if (latestHash && latestHash !== entry.skillFolderHash) {
-        updates.push({ name: skillName, source: entry.source, entry });
-      }
-    } catch {
-      // Skip skills that fail to check
+    if (entry.installMethod === 'repo-symlink' && entry.repoPath) {
+      repoBackedSkills.push({ name: skillName, entry });
+    } else if (entry.sourceType === 'github' && entry.skillFolderHash && entry.skillPath) {
+      legacySkills.push({ name: skillName, entry });
     }
   }
 
-  if (checkedCount === 0) {
-    console.log(`${DIM}No skills to check.${RESET}`);
+  const totalCheckable = repoBackedSkills.length + legacySkills.length;
+
+  if (totalCheckable === 0) {
+    console.log(`${DIM}No skills to update.${RESET}`);
     return;
   }
 
-  if (updates.length === 0) {
-    console.log(`${TEXT}✓ All skills are up to date${RESET}`);
-    console.log();
-    return;
-  }
-
-  console.log(`${TEXT}Found ${updates.length} update(s)${RESET}`);
-  console.log();
-
-  // Reinstall each skill that has an update
   let successCount = 0;
   let failCount = 0;
 
-  for (const update of updates) {
-    console.log(`${TEXT}Updating ${update.name}...${RESET}`);
-
-    // Build the URL with subpath to target the specific skill directory
-    // e.g., https://github.com/owner/repo/tree/main/skills/my-skill
-    let installUrl = update.entry.sourceUrl;
-    if (update.entry.skillPath) {
-      // Extract the skill folder path (remove /SKILL.md suffix)
-      let skillFolder = update.entry.skillPath;
-      if (skillFolder.endsWith('/SKILL.md')) {
-        skillFolder = skillFolder.slice(0, -9);
-      } else if (skillFolder.endsWith('SKILL.md')) {
-        skillFolder = skillFolder.slice(0, -8);
-      }
-      if (skillFolder.endsWith('/')) {
-        skillFolder = skillFolder.slice(0, -1);
-      }
-
-      // Convert git URL to tree URL with path
-      // https://github.com/owner/repo.git -> https://github.com/owner/repo/tree/main/path
-      installUrl = update.entry.sourceUrl.replace(/\.git$/, '').replace(/\/$/, '');
-      installUrl = `${installUrl}/tree/main/${skillFolder}`;
+  if (repoBackedSkills.length > 0) {
+    const repoGroups = new Map<string, string[]>();
+    for (const { name, entry } of repoBackedSkills) {
+      const repoPath = entry.repoPath!;
+      const existing = repoGroups.get(repoPath) || [];
+      existing.push(name);
+      repoGroups.set(repoPath, existing);
     }
 
-    // Use skills CLI to reinstall with -g -y flags
-    const result = spawnSync('npx', ['-y', 'skills', 'add', installUrl, '-g', '-y'], {
-      stdio: ['inherit', 'pipe', 'pipe'],
-    });
+    for (const [repoPath, skills] of repoGroups) {
+      const firstEntry = repoBackedSkills.find((s) => s.entry.repoPath === repoPath)!.entry;
+      console.log(`${TEXT}Pulling ${repoPath}...${RESET}`);
+      try {
+        const { updated } = await pullRepo(
+          getRepoCheckoutPath(firstEntry.sourceUrl, firstEntry.ref)
+        );
+        if (updated) {
+          successCount += skills.length;
+          for (const skillName of skills) {
+            console.log(`  ${TEXT}✓${RESET} Updated ${skillName}`);
+          }
+          const now = new Date().toISOString();
+          for (const skillName of skills) {
+            if (lock.skills[skillName]) {
+              lock.skills[skillName].updatedAt = now;
+            }
+          }
+          if (lock.repos?.[repoPath]) {
+            lock.repos[repoPath].lastFetched = now;
+          }
+          writeSkillLock(lock);
+        } else {
+          console.log(
+            `  ${DIM}Already up to date (${skills.length} skill${skills.length !== 1 ? 's' : ''})${RESET}`
+          );
+        }
+      } catch {
+        failCount += skills.length;
+        console.log(`  ${DIM}✗ Failed to pull ${repoPath}${RESET}`);
+      }
+    }
+  }
 
-    if (result.status === 0) {
-      successCount++;
-      console.log(`  ${TEXT}✓${RESET} Updated ${update.name}`);
-    } else {
-      failCount++;
-      console.log(`  ${DIM}✗ Failed to update ${update.name}${RESET}`);
+  if (legacySkills.length > 0) {
+    const token = getGitHubToken();
+
+    const updates: Array<{ name: string; source: string; entry: SkillLockEntry }> = [];
+    for (const { name, entry } of legacySkills) {
+      try {
+        const latestHash = await fetchSkillFolderHash(entry.source, entry.skillPath!, token);
+        if (latestHash && latestHash !== entry.skillFolderHash) {
+          updates.push({ name, source: entry.source, entry });
+        }
+      } catch {
+        // Skip skills that fail to check
+      }
+    }
+
+    if (updates.length > 0) {
+      console.log(`${TEXT}Found ${updates.length} legacy update(s)${RESET}`);
+      console.log();
+
+      for (const update of updates) {
+        console.log(`${TEXT}Updating ${update.name}...${RESET}`);
+
+        let installUrl = update.entry.sourceUrl;
+        if (update.entry.skillPath) {
+          let skillFolder = update.entry.skillPath;
+          if (skillFolder.endsWith('/SKILL.md')) {
+            skillFolder = skillFolder.slice(0, -9);
+          } else if (skillFolder.endsWith('SKILL.md')) {
+            skillFolder = skillFolder.slice(0, -8);
+          }
+          if (skillFolder.endsWith('/')) {
+            skillFolder = skillFolder.slice(0, -1);
+          }
+
+          installUrl = update.entry.sourceUrl.replace(/\.git$/, '').replace(/\/$/, '');
+          installUrl = `${installUrl}/tree/main/${skillFolder}`;
+        }
+
+        const result = spawnSync('npx', ['-y', 'skills', 'add', installUrl, '-g', '-y'], {
+          stdio: ['inherit', 'pipe', 'pipe'],
+        });
+
+        if (result.status === 0) {
+          successCount++;
+          console.log(`  ${TEXT}✓${RESET} Updated ${update.name}`);
+        } else {
+          failCount++;
+          console.log(`  ${DIM}✗ Failed to update ${update.name}${RESET}`);
+        }
+      }
     }
   }
 
   console.log();
   if (successCount > 0) {
     console.log(`${TEXT}✓ Updated ${successCount} skill(s)${RESET}`);
+  } else if (failCount === 0) {
+    console.log(`${TEXT}✓ All skills are up to date${RESET}`);
   }
   if (failCount > 0) {
     console.log(`${DIM}Failed to update ${failCount} skill(s)${RESET}`);
@@ -538,11 +601,114 @@ async function runUpdate(): Promise<void> {
   // Track telemetry
   track({
     event: 'update',
-    skillCount: String(updates.length),
+    skillCount: String(totalCheckable),
     successCount: String(successCount),
     failCount: String(failCount),
   });
 
+  console.log();
+}
+
+// ============================================
+// GC (garbage collect) Command
+// ============================================
+
+async function runGc(args: string[] = []): Promise<void> {
+  const isYes = args.includes('-y') || args.includes('--yes');
+
+  console.log(`${TEXT}Scanning for unused repo checkouts...${RESET}`);
+  console.log();
+
+  const reposDir = getReposDir();
+
+  // Get orphaned repos from lock file
+  const orphaned = await getOrphanedRepos();
+
+  const lock = readSkillLock();
+  const referencedRepoPaths = new Set(Object.keys(lock.repos ?? {}));
+
+  const unreferenced: string[] = [];
+  const scanForRepos = (dir: string, prefix: string = '') => {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const fullPath = join(dir, entry.name);
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+        try {
+          statSync(join(fullPath, '.git'));
+          if (!referencedRepoPaths.has(relativePath)) {
+            unreferenced.push(relativePath);
+          }
+        } catch {
+          scanForRepos(fullPath, relativePath);
+        }
+      }
+    } catch {
+      // Directory doesn't exist or can't be read
+    }
+  };
+
+  if (existsSync(reposDir)) {
+    scanForRepos(reposDir);
+  }
+
+  const uniqueToRemove = Array.from(new Set([...orphaned.map((o) => o.key), ...unreferenced]));
+
+  if (uniqueToRemove.length === 0) {
+    console.log(`${TEXT}✓ No unused repo checkouts found${RESET}`);
+    console.log();
+    return;
+  }
+
+  console.log(`${TEXT}Found ${uniqueToRemove.length} unused repo checkout(s):${RESET}`);
+  console.log();
+  for (const repo of uniqueToRemove) {
+    console.log(`  ${DIM}•${RESET} ${repo}`);
+  }
+  console.log();
+
+  if (!isYes) {
+    if (!process.stdin.isTTY) {
+      console.log(`${DIM}Use -y to remove without confirmation.${RESET}`);
+      return;
+    }
+
+    const p = await import('@clack/prompts');
+    const confirmed = await p.confirm({
+      message: `Remove ${uniqueToRemove.length} unused repo checkout(s)?`,
+    });
+
+    if (p.isCancel(confirmed) || !confirmed) {
+      console.log(`${DIM}Skipped.${RESET}`);
+      return;
+    }
+  }
+
+  let removedCount = 0;
+  const { rm } = await import('fs/promises');
+
+  for (const repo of uniqueToRemove) {
+    const repoPath = join(reposDir, repo);
+    try {
+      await rm(repoPath, { recursive: true, force: true });
+      removedCount++;
+      console.log(`  ${TEXT}✓${RESET} Removed ${repo}`);
+      try {
+        await removeRepoFromLock(repo);
+      } catch {
+        // Ignore lock file errors
+      }
+    } catch {
+      console.log(`  ${DIM}✗ Failed to remove ${repo}${RESET}`);
+    }
+  }
+
+  console.log();
+  if (removedCount > 0) {
+    console.log(`${TEXT}✓ Removed ${removedCount} repo checkout(s)${RESET}`);
+  }
   console.log();
 }
 
@@ -605,6 +771,9 @@ async function main(): Promise<void> {
     case 'update':
     case 'upgrade':
       runUpdate();
+      break;
+    case 'gc':
+      runGc(restArgs);
       break;
     case '--help':
     case '-h':

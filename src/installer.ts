@@ -294,6 +294,134 @@ export async function installSkillForAgent(
   }
 }
 
+/**
+ * Install a skill from a persistent repo checkout by symlinking the canonical dir
+ * to the skill's directory within the repo, instead of copying files.
+ *
+ * Chain: agent dir → canonical → repo checkout
+ *
+ * Falls back to copy if symlinking fails.
+ */
+export async function installSkillFromRepoForAgent(
+  skill: Skill,
+  agentType: AgentType,
+  options: { global?: boolean; cwd?: string; mode?: InstallMode } = {}
+): Promise<InstallResult> {
+  const agent = agents[agentType];
+  const isGlobal = options.global ?? false;
+  const cwd = options.cwd || process.cwd();
+
+  // Check if agent supports global installation
+  if (isGlobal && agent.globalSkillsDir === undefined) {
+    return {
+      success: false,
+      path: '',
+      mode: options.mode ?? 'symlink',
+      error: `${agent.displayName} does not support global skill installation`,
+    };
+  }
+
+  // Sanitize skill name to prevent directory traversal
+  const rawSkillName = skill.name || basename(skill.path);
+  const skillName = sanitizeName(rawSkillName);
+
+  // Canonical location: .agents/skills/<skill-name>
+  const canonicalBase = getCanonicalSkillsDir(isGlobal, cwd);
+  const canonicalDir = join(canonicalBase, skillName);
+
+  // Agent-specific location (for symlink)
+  const agentBase = isGlobal ? agent.globalSkillsDir! : join(cwd, agent.skillsDir);
+  const agentDir = join(agentBase, skillName);
+
+  const installMode = options.mode ?? 'symlink';
+
+  // Validate paths
+  if (!isPathSafe(canonicalBase, canonicalDir)) {
+    return {
+      success: false,
+      path: agentDir,
+      mode: installMode,
+      error: 'Invalid skill name: potential path traversal detected',
+    };
+  }
+
+  if (!isPathSafe(agentBase, agentDir)) {
+    return {
+      success: false,
+      path: agentDir,
+      mode: installMode,
+      error: 'Invalid skill name: potential path traversal detected',
+    };
+  }
+
+  try {
+    if (installMode === 'copy') {
+      await cleanAndCreateDirectory(agentDir);
+      await copyDirectory(skill.path, agentDir);
+
+      return {
+        success: true,
+        path: agentDir,
+        mode: 'copy',
+      };
+    }
+
+    // Remove any existing canonical dir before symlinking to repo
+    try {
+      await rm(canonicalDir, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+
+    const canonicalSymlinkCreated = await createSymlink(skill.path, canonicalDir);
+
+    if (!canonicalSymlinkCreated) {
+      await cleanAndCreateDirectory(canonicalDir);
+      await copyDirectory(skill.path, canonicalDir);
+    }
+
+    // For universal agents with global install, skill is already in canonical dir
+    if (isGlobal && isUniversalAgent(agentType)) {
+      return {
+        success: true,
+        path: canonicalDir,
+        canonicalPath: canonicalDir,
+        mode: 'symlink',
+        symlinkFailed: !canonicalSymlinkCreated,
+      };
+    }
+
+    const agentSymlinkCreated = await createSymlink(canonicalDir, agentDir);
+
+    if (!agentSymlinkCreated) {
+      await cleanAndCreateDirectory(agentDir);
+      await copyDirectory(skill.path, agentDir);
+
+      return {
+        success: true,
+        path: agentDir,
+        canonicalPath: canonicalDir,
+        mode: 'symlink',
+        symlinkFailed: true,
+      };
+    }
+
+    return {
+      success: true,
+      path: agentDir,
+      canonicalPath: canonicalDir,
+      mode: 'symlink',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      path: agentDir,
+      mode: installMode,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
+
 const EXCLUDE_FILES = new Set(['README.md', 'metadata.json']);
 const EXCLUDE_DIRS = new Set(['.git']);
 
