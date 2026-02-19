@@ -4,7 +4,7 @@ import { readdir, rm, lstat } from 'fs/promises';
 import { join } from 'path';
 import { agents, detectInstalledAgents } from './agents.ts';
 import { track } from './telemetry.ts';
-import { removeSkillFromLock, getSkillFromLock } from './skill-lock.ts';
+import { removeSkillFromLock, getSkillFromLock, removeSkillFromRepo } from './skill-lock.ts';
 import type { AgentType } from './types.ts';
 import { getInstallPath, getCanonicalPath, getCanonicalSkillsDir } from './installer.ts';
 
@@ -144,6 +144,7 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
     success: boolean;
     source?: string;
     sourceType?: string;
+    isRepoBacked?: boolean;
     error?: string;
   }[] = [];
 
@@ -175,6 +176,14 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
       const effectiveSourceType = lockEntry?.sourceType || 'local';
 
       if (isGlobal) {
+        // If this skill was installed from a repo, update the repo's skills list
+        if (lockEntry?.repoPath) {
+          try {
+            await removeSkillFromRepo(lockEntry.repoPath, skillName);
+          } catch {
+            // Don't fail removal if repo tracking update fails
+          }
+        }
         await removeSkillFromLock(skillName);
       }
 
@@ -183,6 +192,7 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
         success: true,
         source: effectiveSource,
         sourceType: effectiveSourceType,
+        isRepoBacked: lockEntry?.installMethod === 'repo-symlink',
       });
     } catch (err) {
       results.push({
@@ -224,6 +234,14 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
 
   if (successful.length > 0) {
     p.log.success(pc.green(`Successfully removed ${successful.length} skill(s)`));
+
+    // Hint about gc if any repo-backed skills were removed
+    const hasRepoBacked = successful.some((r) => r.isRepoBacked);
+    if (hasRepoBacked) {
+      p.log.message(
+        pc.dim('  Repo checkouts are preserved. Run `npx skills gc` to remove unused repos.')
+      );
+    }
   }
 
   if (failed.length > 0) {
