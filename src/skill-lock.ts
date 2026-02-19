@@ -6,7 +6,7 @@ import { execSync } from 'child_process';
 
 const AGENTS_DIR = '.agents';
 const LOCK_FILE = '.skill-lock.json';
-const CURRENT_VERSION = 3; // Bumped from 2 to 3 for folder hash support (GitHub tree SHA)
+const CURRENT_VERSION = 4; // Bumped from 3 to 4 for persistent repo checkout support
 
 /**
  * Represents a single installed skill entry in the lock file.
@@ -30,6 +30,26 @@ export interface SkillLockEntry {
   installedAt: string;
   /** ISO timestamp when the skill was last updated */
   updatedAt: string;
+  /** Git ref checked out (branch, tag, commit) */
+  ref?: string;
+  /** How the skill was installed: repo-symlink (v4+) or copy (legacy) */
+  installMethod?: 'repo-symlink' | 'copy';
+  /** Relative path under the repos dir (e.g., "github.com/owner/repo") */
+  repoPath?: string;
+}
+
+/**
+ * Tracks a persistent repo checkout in the lock file.
+ */
+export interface RepoEntry {
+  /** The original clone URL */
+  url: string;
+  /** Git ref checked out */
+  ref?: string;
+  /** Skill names installed from this repo */
+  skills: string[];
+  /** ISO timestamp of last fetch */
+  lastFetched: string;
 }
 
 /**
@@ -52,6 +72,10 @@ export interface SkillLockFile {
   dismissed?: DismissedPrompts;
   /** Last selected agents for installation */
   lastSelectedAgents?: string[];
+  /** Map of normalized git URL to repo checkout info (v4+) */
+  repos?: Record<string, RepoEntry>;
+  /** User configuration */
+  config?: { reposDir?: string };
 }
 
 /**
@@ -79,9 +103,15 @@ export async function readSkillLock(): Promise<SkillLockFile> {
       return createEmptyLockFile();
     }
 
-    // If old version, wipe and start fresh (backwards incompatible change)
-    // v3 adds skillFolderHash - we want fresh installs to populate it
-    if (parsed.version < CURRENT_VERSION) {
+    // Migrate v3 → v4: preserve existing data, add repos map
+    if (parsed.version === 3) {
+      parsed.version = CURRENT_VERSION;
+      parsed.repos = parsed.repos ?? {};
+      return parsed;
+    }
+
+    // Wipe if version is too old (< 3) — incompatible format
+    if (parsed.version < 3) {
       return createEmptyLockFile();
     }
 
@@ -302,6 +332,7 @@ function createEmptyLockFile(): SkillLockFile {
     version: CURRENT_VERSION,
     skills: {},
     dismissed: {},
+    repos: {},
   };
 }
 
@@ -339,5 +370,81 @@ export async function getLastSelectedAgents(): Promise<string[] | undefined> {
 export async function saveSelectedAgents(agents: string[]): Promise<void> {
   const lock = await readSkillLock();
   lock.lastSelectedAgents = agents;
+  await writeSkillLock(lock);
+}
+
+// ─── Repo Tracking Helpers ───
+
+/**
+ * Add or update a repo entry in the lock file and associate skills with it.
+ * @param normalizedUrl - The normalized git URL (e.g., "github.com/owner/repo")
+ * @param entry - Partial repo entry (url, ref)
+ * @param skillNames - Skill names installed from this repo
+ */
+export async function addRepoToLock(
+  normalizedUrl: string,
+  entry: { url: string; ref?: string },
+  skillNames: string[]
+): Promise<void> {
+  const lock = await readSkillLock();
+  if (!lock.repos) {
+    lock.repos = {};
+  }
+
+  const existing = lock.repos[normalizedUrl];
+  const existingSkills = existing?.skills ?? [];
+  const mergedSkills = Array.from(new Set([...existingSkills, ...skillNames]));
+
+  lock.repos[normalizedUrl] = {
+    url: entry.url,
+    ref: entry.ref,
+    skills: mergedSkills,
+    lastFetched: new Date().toISOString(),
+  };
+
+  await writeSkillLock(lock);
+}
+
+/**
+ * Remove a skill name from a repo's skills list.
+ * Does NOT delete the repo entry even if skills list becomes empty.
+ */
+export async function removeSkillFromRepo(
+  normalizedUrl: string,
+  skillName: string
+): Promise<void> {
+  const lock = await readSkillLock();
+  if (!lock.repos?.[normalizedUrl]) return;
+
+  lock.repos[normalizedUrl].skills = lock.repos[normalizedUrl].skills.filter(
+    (s) => s !== skillName
+  );
+
+  await writeSkillLock(lock);
+}
+
+/**
+ * Get repo entries that have no skills associated with them.
+ * These are candidates for garbage collection.
+ */
+export async function getOrphanedRepos(): Promise<
+  Array<{ key: string; entry: RepoEntry }>
+> {
+  const lock = await readSkillLock();
+  if (!lock.repos) return [];
+
+  return Object.entries(lock.repos)
+    .filter(([, entry]) => entry.skills.length === 0)
+    .map(([key, entry]) => ({ key, entry }));
+}
+
+/**
+ * Remove a repo entry from the lock file.
+ */
+export async function removeRepoFromLock(normalizedUrl: string): Promise<void> {
+  const lock = await readSkillLock();
+  if (lock.repos) {
+    delete lock.repos[normalizedUrl];
+  }
   await writeSkillLock(lock);
 }

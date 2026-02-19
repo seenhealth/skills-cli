@@ -254,7 +254,7 @@ Describe when this skill should be used.
 const AGENTS_DIR = '.agents';
 const LOCK_FILE = '.skill-lock.json';
 const CHECK_UPDATES_API_URL = 'https://add-skill.vercel.sh/check-updates';
-const CURRENT_LOCK_VERSION = 3; // Bumped from 2 to 3 for folder hash support
+const CURRENT_LOCK_VERSION = 4; // Bumped from 3 to 4 for persistent repo checkout support
 
 interface SkillLockEntry {
   source: string;
@@ -307,9 +307,13 @@ function readSkillLock(): SkillLockFile {
     if (typeof parsed.version !== 'number' || !parsed.skills) {
       return { version: CURRENT_LOCK_VERSION, skills: {} };
     }
-    // If old version, wipe and start fresh (backwards incompatible change)
-    // v3 adds skillFolderHash - we want fresh installs to populate it
-    if (parsed.version < CURRENT_LOCK_VERSION) {
+    // Migrate v3 → v4: preserve existing data
+    if (parsed.version === 3) {
+      parsed.version = CURRENT_LOCK_VERSION;
+      return parsed;
+    }
+    // Wipe if version is too old (< 3)
+    if (parsed.version < 3) {
       return { version: CURRENT_LOCK_VERSION, skills: {} };
     }
     return parsed;
