@@ -355,7 +355,6 @@ export async function installSkillFromRepoForAgent(
   }
 
   try {
-    // For copy mode, fall back to regular install (copy from repo to agent dir)
     if (installMode === 'copy') {
       await cleanAndCreateDirectory(agentDir);
       await copyDirectory(skill.path, agentDir);
@@ -367,19 +366,16 @@ export async function installSkillFromRepoForAgent(
       };
     }
 
-    // Symlink mode: symlink canonical dir → repo skill path (not copy)
-    // First, remove any existing canonical dir (could be a previous copy or broken symlink)
+    // Remove any existing canonical dir before symlinking to repo
     try {
       await rm(canonicalDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
 
-    // Create the symlink: canonical → repo checkout skill dir
     const canonicalSymlinkCreated = await createSymlink(skill.path, canonicalDir);
 
     if (!canonicalSymlinkCreated) {
-      // Symlink failed — fall back to copying from repo
       await cleanAndCreateDirectory(canonicalDir);
       await copyDirectory(skill.path, canonicalDir);
     }
@@ -395,11 +391,9 @@ export async function installSkillFromRepoForAgent(
       };
     }
 
-    // Create agent dir symlink → canonical dir
     const agentSymlinkCreated = await createSymlink(canonicalDir, agentDir);
 
     if (!agentSymlinkCreated) {
-      // Agent symlink failed, fall back to copy
       await cleanAndCreateDirectory(agentDir);
       await copyDirectory(skill.path, agentDir);
 

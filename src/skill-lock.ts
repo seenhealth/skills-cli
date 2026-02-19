@@ -391,9 +391,9 @@ export async function addRepoToLock(
     lock.repos = {};
   }
 
-  const existing = lock.repos[normalizedUrl];
-  const existingSkills = existing?.skills ?? [];
-  const mergedSkills = Array.from(new Set([...existingSkills, ...skillNames]));
+  const mergedSkills = Array.from(
+    new Set([...(lock.repos[normalizedUrl]?.skills ?? []), ...skillNames])
+  );
 
   lock.repos[normalizedUrl] = {
     url: entry.url,
@@ -409,10 +409,7 @@ export async function addRepoToLock(
  * Remove a skill name from a repo's skills list.
  * Does NOT delete the repo entry even if skills list becomes empty.
  */
-export async function removeSkillFromRepo(
-  normalizedUrl: string,
-  skillName: string
-): Promise<void> {
+export async function removeSkillFromRepo(normalizedUrl: string, skillName: string): Promise<void> {
   const lock = await readSkillLock();
   if (!lock.repos?.[normalizedUrl]) return;
 
@@ -427,9 +424,7 @@ export async function removeSkillFromRepo(
  * Get repo entries that have no skills associated with them.
  * These are candidates for garbage collection.
  */
-export async function getOrphanedRepos(): Promise<
-  Array<{ key: string; entry: RepoEntry }>
-> {
+export async function getOrphanedRepos(): Promise<Array<{ key: string; entry: RepoEntry }>> {
   const lock = await readSkillLock();
   if (!lock.repos) return [];
 

@@ -1566,7 +1566,6 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
     }
 
     let skillsDir: string;
-    // Whether this install uses a persistent repo checkout
     let useRepoCheckout = false;
 
     if (parsed.type === 'local') {
@@ -1580,10 +1579,8 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
       skillsDir = parsed.localPath!;
       spinner.stop('Local path validated');
     } else {
-      // Git source — use persistent repo checkout
       spinner.start('Checking out repository...');
-      const repoDir = await ensureRepoCheckout(parsed.url, { ref: parsed.ref });
-      skillsDir = repoDir;
+      skillsDir = await ensureRepoCheckout(parsed.url, { ref: parsed.ref });
       useRepoCheckout = true;
       spinner.stop('Repository ready');
     }
@@ -1913,7 +1910,6 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
 
     for (const skill of selectedSkills) {
       for (const agent of targetAgents) {
-        // Use repo-symlink install for git sources, regular copy-install for local
         const installFn = useRepoCheckout ? installSkillFromRepoForAgent : installSkillForAgent;
         const result = await installFn(skill, agent, {
           global: installGlobally,
@@ -1933,9 +1929,7 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
     const successful = results.filter((r) => r.success);
     const failed = results.filter((r) => !r.success);
 
-    // Track installation result
     // Build skillFiles map: { skillName: relative path to SKILL.md from repo root }
-    // Use skillsDir as the repo root (works for both persistent checkout and temp dir)
     const repoRoot = useRepoCheckout ? skillsDir : tempDir;
     const skillFiles: Record<string, string> = {};
     for (const skill of selectedSkills) {
@@ -2016,7 +2010,6 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
               sourceUrl: parsed.url,
               skillPath: skillPathValue,
               skillFolderHash,
-              // v4 fields: track install method and repo path for persistent checkouts
               ...(useRepoCheckout && {
                 installMethod: 'repo-symlink' as const,
                 repoPath: normalizedGitUrl,
@@ -2029,7 +2022,6 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
         }
       }
 
-      // Track the repo checkout in the lock file for gc and update commands
       if (useRepoCheckout && normalizedGitUrl) {
         try {
           const installedSkillNames = selectedSkills

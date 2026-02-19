@@ -118,13 +118,9 @@ export function normalizeGitUrl(url: string): string {
  */
 export function getRepoCheckoutPath(url: string, ref?: string): string {
   const normalized = normalizeGitUrl(url);
-  const dirName = ref ? `${normalized}@${ref}` : normalized;
-  return join(getReposDir(), dirName);
+  return join(getReposDir(), ref ? `${normalized}@${ref}` : normalized);
 }
 
-/**
- * Check if a directory exists.
- */
 async function dirExists(path: string): Promise<boolean> {
   try {
     await access(path);
@@ -140,20 +136,15 @@ async function dirExists(path: string): Promise<boolean> {
  * - If not, clones it with blobless filter for space efficiency.
  * Returns the local checkout path.
  */
-export async function ensureRepoCheckout(
-  url: string,
-  options?: { ref?: string }
-): Promise<string> {
+export async function ensureRepoCheckout(url: string, options?: { ref?: string }): Promise<string> {
   const checkoutPath = getRepoCheckoutPath(url, options?.ref);
 
   if (await dirExists(join(checkoutPath, '.git'))) {
-    // Repo already exists — fetch and update
     const git = simpleGit(checkoutPath, { timeout: { block: CLONE_TIMEOUT_MS } });
     try {
       await git.fetch(['origin']);
       if (options?.ref) {
         await git.checkout(options.ref);
-        // Try to pull if on a branch (will fail for tags/detached HEAD, which is fine)
         try {
           await git.pull('origin', options.ref);
         } catch {
@@ -163,28 +154,20 @@ export async function ensureRepoCheckout(
         await git.pull();
       }
     } catch (error) {
-      // If fetch/pull fails (e.g., network down), the local checkout is still valid
       const errorMessage = error instanceof Error ? error.message : String(error);
-      // Only throw if this is an auth error — network errors are acceptable for offline use
       const isAuthError =
         errorMessage.includes('Authentication failed') ||
         errorMessage.includes('could not read Username') ||
         errorMessage.includes('Permission denied') ||
         errorMessage.includes('Repository not found');
       if (isAuthError) {
-        throw new GitCloneError(
-          `Authentication failed for ${url}.`,
-          url,
-          false,
-          true
-        );
+        throw new GitCloneError(`Authentication failed for ${url}.`, url, false, true);
       }
-      // Otherwise, silently use the existing checkout
+      // Network errors are acceptable — use existing checkout
     }
     return checkoutPath;
   }
 
-  // Clone fresh — use blobless clone for space efficiency while supporting git pull
   await mkdir(checkoutPath, { recursive: true });
   const git = simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } });
   const cloneOptions = ['--filter=blob:none'];
@@ -200,8 +183,7 @@ export async function ensureRepoCheckout(
     await rm(checkoutPath, { recursive: true, force: true }).catch(() => {});
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const isTimeout =
-      errorMessage.includes('block timeout') || errorMessage.includes('timed out');
+    const isTimeout = errorMessage.includes('block timeout') || errorMessage.includes('timed out');
     const isAuthError =
       errorMessage.includes('Authentication failed') ||
       errorMessage.includes('could not read Username') ||
@@ -240,13 +222,10 @@ export async function ensureRepoCheckout(
  * Pull latest changes for a persistent repo checkout.
  * Returns whether any changes were fetched.
  */
-export async function pullRepo(
-  repoDir: string
-): Promise<{ updated: boolean }> {
+export async function pullRepo(repoDir: string): Promise<{ updated: boolean }> {
   const git = simpleGit(repoDir, { timeout: { block: CLONE_TIMEOUT_MS } });
 
   try {
-    // Get current HEAD before pull
     const beforeHash = await git.revparse(['HEAD']);
     await git.fetch(['origin']);
     await git.pull();

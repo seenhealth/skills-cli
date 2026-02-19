@@ -176,7 +176,6 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
       const effectiveSourceType = lockEntry?.sourceType || 'local';
 
       if (isGlobal) {
-        // If this skill was installed from a repo, update the repo's skills list
         if (lockEntry?.repoPath) {
           try {
             await removeSkillFromRepo(lockEntry.repoPath, skillName);
@@ -235,7 +234,6 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
   if (successful.length > 0) {
     p.log.success(pc.green(`Successfully removed ${successful.length} skill(s)`));
 
-    // Hint about gc if any repo-backed skills were removed
     const hasRepoBacked = successful.some((r) => r.isRepoBacked);
     if (hasRepoBacked) {
       p.log.message(
