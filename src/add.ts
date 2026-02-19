@@ -21,10 +21,11 @@ async function isSourcePrivate(source: string): Promise<boolean | null> {
   }
   return isRepoPrivate(ownerRepo.owner, ownerRepo.repo);
 }
-import { cloneRepo, cleanupTempDir, GitCloneError } from './git.ts';
+import { cleanupTempDir, GitCloneError, ensureRepoCheckout, normalizeGitUrl } from './git.ts';
 import { discoverSkills, getSkillDisplayName, filterSkills } from './skills.ts';
 import {
   installSkillForAgent,
+  installSkillFromRepoForAgent,
   isSkillInstalled,
   getInstallPath,
   getCanonicalPath,
@@ -51,6 +52,7 @@ import { findProvider, wellKnownProvider, type WellKnownSkill } from './provider
 import { fetchMintlifySkill } from './mintlify.ts';
 import {
   addSkillToLock,
+  addRepoToLock,
   fetchSkillFolderHash,
   isPromptDismissed,
   dismissPrompt,
@@ -1564,6 +1566,8 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
     }
 
     let skillsDir: string;
+    // Whether this install uses a persistent repo checkout
+    let useRepoCheckout = false;
 
     if (parsed.type === 'local') {
       // Use local path directly, no cloning needed
@@ -1576,11 +1580,12 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
       skillsDir = parsed.localPath!;
       spinner.stop('Local path validated');
     } else {
-      // Clone repository for remote sources
-      spinner.start('Cloning repository...');
-      tempDir = await cloneRepo(parsed.url, parsed.ref);
-      skillsDir = tempDir;
-      spinner.stop('Repository cloned');
+      // Git source — use persistent repo checkout
+      spinner.start('Checking out repository...');
+      const repoDir = await ensureRepoCheckout(parsed.url, { ref: parsed.ref });
+      skillsDir = repoDir;
+      useRepoCheckout = true;
+      spinner.stop('Repository ready');
     }
 
     // If skillFilter is present from @skill syntax (e.g., owner/repo@skill-name),
@@ -1908,7 +1913,9 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
 
     for (const skill of selectedSkills) {
       for (const agent of targetAgents) {
-        const result = await installSkillForAgent(skill, agent, {
+        // Use repo-symlink install for git sources, regular copy-install for local
+        const installFn = useRepoCheckout ? installSkillFromRepoForAgent : installSkillForAgent;
+        const result = await installFn(skill, agent, {
           global: installGlobally,
           mode: installMode,
         });
@@ -1928,19 +1935,21 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
 
     // Track installation result
     // Build skillFiles map: { skillName: relative path to SKILL.md from repo root }
+    // Use skillsDir as the repo root (works for both persistent checkout and temp dir)
+    const repoRoot = useRepoCheckout ? skillsDir : tempDir;
     const skillFiles: Record<string, string> = {};
     for (const skill of selectedSkills) {
-      // skill.path is absolute, compute relative from tempDir (repo root)
+      // skill.path is absolute, compute relative from repo root
       let relativePath: string;
-      if (tempDir && skill.path === tempDir) {
+      if (repoRoot && skill.path === repoRoot) {
         // Skill is at root level of repo
         relativePath = 'SKILL.md';
-      } else if (tempDir && skill.path.startsWith(tempDir + sep)) {
-        // Compute path relative to repo root (tempDir), not search path
+      } else if (repoRoot && skill.path.startsWith(repoRoot + sep)) {
+        // Compute path relative to repo root, not search path
         // Use forward slashes for telemetry (URL-style paths)
         relativePath =
           skill.path
-            .slice(tempDir.length + 1)
+            .slice(repoRoot.length + 1)
             .split(sep)
             .join('/') + '/SKILL.md';
       } else {
@@ -1987,6 +1996,8 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
     // Add to skill lock file for update tracking (only for global installs)
     if (successful.length > 0 && installGlobally && normalizedSource) {
       const successfulSkillNames = new Set(successful.map((r) => r.skill));
+      const normalizedGitUrl = useRepoCheckout ? normalizeGitUrl(parsed.url) : undefined;
+
       for (const skill of selectedSkills) {
         const skillDisplayName = getSkillDisplayName(skill);
         if (successfulSkillNames.has(skillDisplayName)) {
@@ -2005,10 +2016,32 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
               sourceUrl: parsed.url,
               skillPath: skillPathValue,
               skillFolderHash,
+              // v4 fields: track install method and repo path for persistent checkouts
+              ...(useRepoCheckout && {
+                installMethod: 'repo-symlink' as const,
+                repoPath: normalizedGitUrl,
+                ref: parsed.ref,
+              }),
             });
           } catch {
             // Don't fail installation if lock file update fails
           }
+        }
+      }
+
+      // Track the repo checkout in the lock file for gc and update commands
+      if (useRepoCheckout && normalizedGitUrl) {
+        try {
+          const installedSkillNames = selectedSkills
+            .filter((s) => successfulSkillNames.has(getSkillDisplayName(s)))
+            .map((s) => s.name);
+          await addRepoToLock(
+            normalizedGitUrl,
+            { url: parsed.url, ref: parsed.ref },
+            installedSkillNames
+          );
+        } catch {
+          // Don't fail installation if lock file update fails
         }
       }
     }
