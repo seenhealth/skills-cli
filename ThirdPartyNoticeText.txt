@@ -95,7 +95,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 ================================================================================
-Package: simple-git@3.30.0
+Package: simple-git@3.31.1
 License: MIT
 Repository: https://github.com/steveukx/git-js
 --------------------------------------------------------------------------------
