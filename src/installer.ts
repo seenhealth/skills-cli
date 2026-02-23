@@ -913,6 +913,7 @@ export interface InstalledSkill {
   description: string;
   path: string;
   canonicalPath: string;
+  sourcePath?: string;
   scope: 'project' | 'global';
   agents: AgentType[];
 }
@@ -991,12 +992,26 @@ export async function listInstalledSkills(
       const entries = await readdir(scope.path, { withFileTypes: true });
 
       for (const entry of entries) {
-        if (!entry.isDirectory()) {
+        // Repo-based installs can create symlinked skill directories.
+        // Include symlinks so SKILL.md can be resolved through them.
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) {
           continue;
         }
 
         const skillDir = join(scope.path, entry.name);
         const skillMdPath = join(skillDir, 'SKILL.md');
+        let sourcePath: string | undefined;
+
+        // Capture the real source path for symlinked skills so list output can
+        // show the underlying repo/subfolder location.
+        try {
+          const dirStats = await lstat(skillDir);
+          if (dirStats.isSymbolicLink()) {
+            sourcePath = await realpath(skillDir);
+          }
+        } catch {
+          // Ignore symlink resolution errors and continue listing the skill.
+        }
 
         // Check if SKILL.md exists
         try {
@@ -1022,12 +1037,16 @@ export async function listInstalledSkills(
             if (!existing.agents.includes(scope.agentType)) {
               existing.agents.push(scope.agentType);
             }
+            if (!existing.sourcePath && sourcePath) {
+              existing.sourcePath = sourcePath;
+            }
           } else {
             skillsMap.set(skillKey, {
               name: skill.name,
               description: skill.description,
               path: skillDir,
               canonicalPath: skillDir,
+              sourcePath,
               scope: scopeKey,
               agents: [scope.agentType],
             });
@@ -1115,12 +1134,16 @@ export async function listInstalledSkills(
               existing.agents.push(agent);
             }
           }
+          if (!existing.sourcePath && sourcePath) {
+            existing.sourcePath = sourcePath;
+          }
         } else {
           skillsMap.set(skillKey, {
             name: skill.name,
             description: skill.description,
             path: skillDir,
             canonicalPath: skillDir,
+            sourcePath,
             scope: scopeKey,
             agents: installedAgents,
           });

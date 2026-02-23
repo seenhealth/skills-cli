@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdir, writeFile, rm } from 'fs/promises';
+import { mkdir, writeFile, rm, symlink, realpath } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { listInstalledSkills } from '../src/installer.ts';
@@ -54,6 +54,7 @@ ${skillData.description}
     expect(skills[0]!.name).toBe('test-skill');
     expect(skills[0]!.description).toBe('A test skill');
     expect(skills[0]!.scope).toBe('project');
+    expect(skills[0]!.sourcePath).toBeUndefined();
   });
 
   it('should find multiple skills', async () => {
@@ -139,6 +140,32 @@ ${skillData.description}
     });
     expect(skills).toHaveLength(1);
     expect(skills[0]!.name).toBe('test-skill');
+  });
+
+  it('should find symlinked canonical skills from repo installs', async () => {
+    const repoSkillDir = join(testDir, 'repo', 'skills', 'repo-skill');
+    await mkdir(repoSkillDir, { recursive: true });
+    await writeFile(
+      join(repoSkillDir, 'SKILL.md'),
+      `---
+name: repo-skill
+description: A symlinked repo skill
+---
+
+# repo-skill
+`
+    );
+
+    const canonicalBase = join(testDir, '.agents', 'skills');
+    await mkdir(canonicalBase, { recursive: true });
+    const canonicalSkillDir = join(canonicalBase, 'repo-skill');
+    await symlink(repoSkillDir, canonicalSkillDir);
+
+    const skills = await listInstalledSkills({ global: false, cwd: testDir });
+    expect(skills).toHaveLength(1);
+    expect(skills[0]!.name).toBe('repo-skill');
+    expect(skills[0]!.path).toBe(canonicalSkillDir);
+    expect(skills[0]!.sourcePath).toBe(await realpath(repoSkillDir));
   });
 
   // Issue #225 part 1: Only installed agents should be attributed

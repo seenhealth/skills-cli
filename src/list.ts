@@ -101,10 +101,14 @@ export async function runList(args: string[]): Promise<void> {
 
   function printSkill(skill: InstalledSkill): void {
     const shortPath = shortenPath(skill.canonicalPath, cwd);
+    const shortSourcePath = skill.sourcePath ? shortenPath(skill.sourcePath, cwd) : undefined;
     const agentNames = skill.agents.map((a) => agents[a].displayName);
     const agentInfo =
       skill.agents.length > 0 ? formatList(agentNames) : `${YELLOW}not linked${RESET}`;
     console.log(`${CYAN}${skill.name}${RESET} ${DIM}${shortPath}${RESET}`);
+    if (shortSourcePath && shortSourcePath !== shortPath) {
+      console.log(`  ${DIM}Source:${RESET} ${shortSourcePath}`);
+    }
     console.log(`  ${DIM}Agents:${RESET} ${agentInfo}`);
   }
 
