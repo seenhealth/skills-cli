@@ -19,6 +19,9 @@ import {
 } from './skill-lock.ts';
 import { pullRepo, getRepoCheckoutPath } from './git.ts';
 import { getReposDir } from './constants.ts';
+import { reconcileRepoSkills } from './reconcile.ts';
+import { detectInstalledAgents, agents as agentConfigs } from './agents.ts';
+import type { AgentType } from './types.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -292,6 +295,7 @@ interface SkillLockFile {
   version: number;
   skills: Record<string, SkillLockEntry>;
   repos?: Record<string, RepoEntry>;
+  lastSelectedAgents?: string[];
 }
 
 interface CheckUpdatesRequest {
@@ -505,9 +509,8 @@ async function runUpdate(): Promise<void> {
       const firstEntry = repoBackedSkills.find((s) => s.entry.repoPath === repoPath)!.entry;
       console.log(`${TEXT}Pulling ${repoPath}...${RESET}`);
       try {
-        const { updated } = await pullRepo(
-          getRepoCheckoutPath(firstEntry.sourceUrl, firstEntry.ref)
-        );
+        const checkoutPath = getRepoCheckoutPath(firstEntry.sourceUrl, firstEntry.ref);
+        const { updated } = await pullRepo(checkoutPath);
         if (updated) {
           successCount += skills.length;
           for (const skillName of skills) {
@@ -522,6 +525,28 @@ async function runUpdate(): Promise<void> {
           if (lock.repos?.[repoPath]) {
             lock.repos[repoPath].lastFetched = now;
           }
+
+          // Reconcile: detect skills added/removed/renamed in the repo
+          const reconcileAgents =
+            lock.lastSelectedAgents?.filter((a): a is AgentType => a in agentConfigs) ??
+            (await detectInstalledAgents());
+          const { added, removed } = await reconcileRepoSkills(repoPath, checkoutPath, lock, {
+            sourceUrl: firstEntry.sourceUrl,
+            sourceType: firstEntry.sourceType,
+            ref: firstEntry.ref,
+            agents: reconcileAgents,
+          });
+          if (added.length > 0) {
+            for (const name of added) {
+              console.log(`  ${TEXT}+${RESET} Added ${name}`);
+            }
+          }
+          if (removed.length > 0) {
+            for (const name of removed) {
+              console.log(`  ${TEXT}-${RESET} Removed ${name}`);
+            }
+          }
+
           writeSkillLock(lock);
         } else {
           console.log(

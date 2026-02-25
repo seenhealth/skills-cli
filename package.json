@@ -1,6 +1,6 @@
 {
   "name": "@seenhealth/skills",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "The open agent skills ecosystem",
   "type": "module",
   "bin": {
