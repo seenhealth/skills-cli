@@ -50,6 +50,8 @@ export interface RepoEntry {
   skills: string[];
   /** ISO timestamp of last fetch */
   lastFetched: string;
+  /** Git HEAD hash at last successful update/install */
+  headHash?: string;
 }
 
 /**
@@ -383,7 +385,7 @@ export async function saveSelectedAgents(agents: string[]): Promise<void> {
  */
 export async function addRepoToLock(
   normalizedUrl: string,
-  entry: { url: string; ref?: string },
+  entry: { url: string; ref?: string; headHash?: string },
   skillNames: string[]
 ): Promise<void> {
   const lock = await readSkillLock();
@@ -400,6 +402,7 @@ export async function addRepoToLock(
     ref: entry.ref,
     skills: mergedSkills,
     lastFetched: new Date().toISOString(),
+    headHash: entry.headHash,
   };
 
   await writeSkillLock(lock);

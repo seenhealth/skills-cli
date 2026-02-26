@@ -26,6 +26,7 @@ export interface ReconcileRepoEntry {
   ref?: string;
   skills: string[];
   lastFetched: string;
+  headHash?: string;
 }
 
 export interface ReconcileLock {

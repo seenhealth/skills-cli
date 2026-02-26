@@ -153,11 +153,10 @@ describe('skill-lock v4 schema', () => {
     });
 
     it('addRepoToLock creates a new repo entry', async () => {
-      await addRepoToLock(
-        'github.com/owner/repo',
-        { url: 'https://github.com/owner/repo.git' },
-        ['skill-a', 'skill-b']
-      );
+      await addRepoToLock('github.com/owner/repo', { url: 'https://github.com/owner/repo.git' }, [
+        'skill-a',
+        'skill-b',
+      ]);
 
       const lock = await readSkillLock();
       const repo = lock.repos?.['github.com/owner/repo'];
@@ -167,12 +166,51 @@ describe('skill-lock v4 schema', () => {
       expect(repo!.lastFetched).toBeTruthy();
     });
 
-    it('addRepoToLock merges skills for existing repo', async () => {
+    it('addRepoToLock stores headHash when provided', async () => {
       await addRepoToLock(
         'github.com/owner/repo',
-        { url: 'https://github.com/owner/repo.git' },
+        { url: 'https://github.com/owner/repo.git', headHash: 'abc123def456' },
         ['skill-a']
       );
+
+      const lock = await readSkillLock();
+      const repo = lock.repos?.['github.com/owner/repo'];
+      expect(repo!.headHash).toBe('abc123def456');
+    });
+
+    it('addRepoToLock omits headHash when not provided', async () => {
+      await addRepoToLock('github.com/owner/repo', { url: 'https://github.com/owner/repo.git' }, [
+        'skill-a',
+      ]);
+
+      const lock = await readSkillLock();
+      const repo = lock.repos?.['github.com/owner/repo'];
+      expect(repo!.headHash).toBeUndefined();
+    });
+
+    it('addRepoToLock updates headHash on subsequent calls', async () => {
+      await addRepoToLock(
+        'github.com/owner/repo',
+        { url: 'https://github.com/owner/repo.git', headHash: 'hash-v1' },
+        ['skill-a']
+      );
+
+      await addRepoToLock(
+        'github.com/owner/repo',
+        { url: 'https://github.com/owner/repo.git', headHash: 'hash-v2' },
+        ['skill-b']
+      );
+
+      const lock = await readSkillLock();
+      const repo = lock.repos?.['github.com/owner/repo'];
+      expect(repo!.headHash).toBe('hash-v2');
+      expect(repo!.skills).toEqual(['skill-a', 'skill-b']);
+    });
+
+    it('addRepoToLock merges skills for existing repo', async () => {
+      await addRepoToLock('github.com/owner/repo', { url: 'https://github.com/owner/repo.git' }, [
+        'skill-a',
+      ]);
 
       await addRepoToLock(
         'github.com/owner/repo',
@@ -186,11 +224,10 @@ describe('skill-lock v4 schema', () => {
     });
 
     it('removeSkillFromRepo removes a skill name', async () => {
-      await addRepoToLock(
-        'github.com/owner/repo',
-        { url: 'https://github.com/owner/repo.git' },
-        ['skill-a', 'skill-b']
-      );
+      await addRepoToLock('github.com/owner/repo', { url: 'https://github.com/owner/repo.git' }, [
+        'skill-a',
+        'skill-b',
+      ]);
 
       await removeSkillFromRepo('github.com/owner/repo', 'skill-a');
 
@@ -200,16 +237,12 @@ describe('skill-lock v4 schema', () => {
     });
 
     it('getOrphanedRepos returns repos with no skills', async () => {
-      await addRepoToLock(
-        'github.com/owner/repo1',
-        { url: 'https://github.com/owner/repo1.git' },
-        ['skill-a']
-      );
-      await addRepoToLock(
-        'github.com/owner/repo2',
-        { url: 'https://github.com/owner/repo2.git' },
-        ['skill-b']
-      );
+      await addRepoToLock('github.com/owner/repo1', { url: 'https://github.com/owner/repo1.git' }, [
+        'skill-a',
+      ]);
+      await addRepoToLock('github.com/owner/repo2', { url: 'https://github.com/owner/repo2.git' }, [
+        'skill-b',
+      ]);
 
       // Remove all skills from repo2
       await removeSkillFromRepo('github.com/owner/repo2', 'skill-b');
@@ -219,12 +252,44 @@ describe('skill-lock v4 schema', () => {
       expect(orphaned[0].key).toBe('github.com/owner/repo2');
     });
 
+    it('existing repo entry without headHash is preserved on read', async () => {
+      // Simulate a lock file written before headHash was introduced
+      const lockWithoutHash: SkillLockFile = {
+        version: 4,
+        skills: {
+          'skill-a': {
+            source: 'github.com/owner/repo',
+            sourceType: 'github',
+            sourceUrl: 'https://github.com/owner/repo.git',
+            skillFolderHash: '',
+            installedAt: '2024-01-01T00:00:00.000Z',
+            updatedAt: '2024-01-01T00:00:00.000Z',
+            installMethod: 'repo-symlink',
+            repoPath: 'github.com/owner/repo',
+          },
+        },
+        repos: {
+          'github.com/owner/repo': {
+            url: 'https://github.com/owner/repo.git',
+            skills: ['skill-a'],
+            lastFetched: '2024-01-01T00:00:00.000Z',
+            // no headHash field
+          },
+        },
+      };
+      await writeSkillLock(lockWithoutHash);
+
+      const lock = await readSkillLock();
+      const repo = lock.repos?.['github.com/owner/repo'];
+      expect(repo).toBeDefined();
+      expect(repo!.headHash).toBeUndefined();
+      expect(repo!.skills).toEqual(['skill-a']);
+    });
+
     it('removeRepoFromLock deletes the repo entry', async () => {
-      await addRepoToLock(
-        'github.com/owner/repo',
-        { url: 'https://github.com/owner/repo.git' },
-        ['skill-a']
-      );
+      await addRepoToLock('github.com/owner/repo', { url: 'https://github.com/owner/repo.git' }, [
+        'skill-a',
+      ]);
 
       await removeRepoFromLock('github.com/owner/repo');
 

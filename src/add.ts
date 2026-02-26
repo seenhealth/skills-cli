@@ -21,7 +21,13 @@ async function isSourcePrivate(source: string): Promise<boolean | null> {
   }
   return isRepoPrivate(ownerRepo.owner, ownerRepo.repo);
 }
-import { cleanupTempDir, GitCloneError, ensureRepoCheckout, normalizeGitUrl } from './git.ts';
+import {
+  cleanupTempDir,
+  GitCloneError,
+  ensureRepoCheckout,
+  normalizeGitUrl,
+  getRepoHeadHash,
+} from './git.ts';
 import { discoverSkills, getSkillDisplayName, filterSkills } from './skills.ts';
 import {
   installSkillForAgent,
@@ -2027,9 +2033,10 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
           const installedSkillNames = selectedSkills
             .filter((s) => successfulSkillNames.has(getSkillDisplayName(s)))
             .map((s) => s.name);
+          const headHash = (await getRepoHeadHash(skillsDir)) ?? undefined;
           await addRepoToLock(
             normalizedGitUrl,
-            { url: parsed.url, ref: parsed.ref },
+            { url: parsed.url, ref: parsed.ref, headHash },
             installedSkillNames
           );
         } catch {

@@ -220,20 +220,26 @@ export async function ensureRepoCheckout(url: string, options?: { ref?: string }
 
 /**
  * Pull latest changes for a persistent repo checkout.
- * Returns whether any changes were fetched.
  */
-export async function pullRepo(repoDir: string): Promise<{ updated: boolean }> {
+export async function pullRepo(repoDir: string): Promise<void> {
   const git = simpleGit(repoDir, { timeout: { block: CLONE_TIMEOUT_MS } });
 
   try {
-    const beforeHash = await git.revparse(['HEAD']);
     await git.fetch(['origin']);
     await git.pull();
-    const afterHash = await git.revparse(['HEAD']);
-
-    return { updated: beforeHash !== afterHash };
   } catch {
-    // If pull fails, report no update (repo still usable locally)
-    return { updated: false };
+    // If pull fails, repo is still usable locally
+  }
+}
+
+/**
+ * Get the current HEAD hash of a repo checkout.
+ */
+export async function getRepoHeadHash(repoDir: string): Promise<string | null> {
+  try {
+    const git = simpleGit(repoDir, { timeout: { block: CLONE_TIMEOUT_MS } });
+    return (await git.revparse(['HEAD'])).trim();
+  } catch {
+    return null;
   }
 }

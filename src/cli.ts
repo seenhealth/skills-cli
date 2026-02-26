@@ -17,7 +17,7 @@ import {
   getOrphanedRepos,
   removeRepoFromLock,
 } from './skill-lock.ts';
-import { pullRepo, getRepoCheckoutPath } from './git.ts';
+import { pullRepo, getRepoCheckoutPath, getRepoHeadHash } from './git.ts';
 import { getReposDir } from './constants.ts';
 import { reconcileRepoSkills } from './reconcile.ts';
 import { detectInstalledAgents, agents as agentConfigs } from './agents.ts';
@@ -289,6 +289,7 @@ interface RepoEntry {
   ref?: string;
   skills: string[];
   lastFetched: string;
+  headHash?: string;
 }
 
 interface SkillLockFile {
@@ -510,8 +511,16 @@ async function runUpdate(): Promise<void> {
       console.log(`${TEXT}Pulling ${repoPath}...${RESET}`);
       try {
         const checkoutPath = getRepoCheckoutPath(firstEntry.sourceUrl, firstEntry.ref);
-        const { updated } = await pullRepo(checkoutPath);
-        if (updated) {
+        const storedHash = lock.repos?.[repoPath]?.headHash;
+
+        await pullRepo(checkoutPath);
+        const currentHash = await getRepoHeadHash(checkoutPath);
+
+        // Compare stored hash vs current HEAD — detects changes even if
+        // the repo was pulled manually outside this CLI
+        const repoChanged = !storedHash || storedHash !== currentHash;
+
+        if (repoChanged) {
           successCount += skills.length;
           for (const skillName of skills) {
             console.log(`  ${TEXT}✓${RESET} Updated ${skillName}`);
@@ -524,29 +533,33 @@ async function runUpdate(): Promise<void> {
           }
           if (lock.repos?.[repoPath]) {
             lock.repos[repoPath].lastFetched = now;
+            lock.repos[repoPath].headHash = currentHash ?? undefined;
           }
+        }
 
-          // Reconcile: detect skills added/removed/renamed in the repo
-          const reconcileAgents =
-            lock.lastSelectedAgents?.filter((a): a is AgentType => a in agentConfigs) ??
-            (await detectInstalledAgents());
-          const { added, removed } = await reconcileRepoSkills(repoPath, checkoutPath, lock, {
-            sourceUrl: firstEntry.sourceUrl,
-            sourceType: firstEntry.sourceType,
-            ref: firstEntry.ref,
-            agents: reconcileAgents,
-          });
-          if (added.length > 0) {
-            for (const name of added) {
-              console.log(`  ${TEXT}+${RESET} Added ${name}`);
-            }
+        // Always reconcile: the lock file may track skills that no longer
+        // exist in the repo (renames, removals) regardless of git changes
+        const reconcileAgents =
+          lock.lastSelectedAgents?.filter((a): a is AgentType => a in agentConfigs) ??
+          (await detectInstalledAgents());
+        const { added, removed } = await reconcileRepoSkills(repoPath, checkoutPath, lock, {
+          sourceUrl: firstEntry.sourceUrl,
+          sourceType: firstEntry.sourceType,
+          ref: firstEntry.ref,
+          agents: reconcileAgents,
+        });
+        if (added.length > 0) {
+          for (const name of added) {
+            console.log(`  ${TEXT}+${RESET} Added ${name}`);
           }
-          if (removed.length > 0) {
-            for (const name of removed) {
-              console.log(`  ${TEXT}-${RESET} Removed ${name}`);
-            }
+        }
+        if (removed.length > 0) {
+          for (const name of removed) {
+            console.log(`  ${TEXT}-${RESET} Removed ${name}`);
           }
+        }
 
+        if (added.length > 0 || removed.length > 0 || repoChanged) {
           writeSkillLock(lock);
         } else {
           console.log(
