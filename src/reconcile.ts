@@ -1,8 +1,9 @@
-import { rm } from 'fs/promises';
-import type { AgentType } from './types.ts';
-import { discoverSkills } from './skills.ts';
-import { installSkillFromRepoForAgent, getCanonicalPath } from './installer.ts';
+import { readlink, rm } from 'fs/promises';
+import { dirname, resolve } from 'path';
 import { agents } from './agents.ts';
+import { getCanonicalPath, installSkillFromRepoForAgent } from './installer.ts';
+import { discoverSkills } from './skills.ts';
+import type { AgentType } from './types.ts';
 
 /**
  * Minimal lock interfaces matching the shape used by cli.ts's synchronous types.
@@ -38,6 +39,7 @@ export interface ReconcileLock {
 export interface ReconcileResult {
   added: string[];
   removed: string[];
+  moved: string[];
 }
 
 /**
@@ -61,7 +63,9 @@ export async function reconcileRepoSkills(
   const trackedSkills = lock.repos?.[repoPath]?.skills ?? [];
 
   // 2. Discover actual skills in the repo checkout
-  const discoveredSkills = await discoverSkills(repoCheckoutPath, undefined, { fullDepth: true });
+  const discoveredSkills = await discoverSkills(repoCheckoutPath, undefined, {
+    fullDepth: true,
+  });
   const discoveredNames = new Set(discoveredSkills.map((s) => s.name));
 
   // 3. Compute diff
@@ -132,5 +136,33 @@ export async function reconcileRepoSkills(
     }
   }
 
-  return { added, removed };
+  // 6. Handle moved skills (same name, different path in repo)
+  const moved: string[] = [];
+  for (const skill of discoveredSkills) {
+    if (trackedSet.has(skill.name) && !removed.includes(skill.name)) {
+      const canonicalPath = getCanonicalPath(skill.name, { global: true });
+      try {
+        const currentTarget = await readlink(canonicalPath);
+        const resolvedCurrent = resolve(dirname(canonicalPath), currentTarget);
+        const resolvedNew = resolve(skill.path);
+        if (resolvedCurrent !== resolvedNew) {
+          // Skill moved — reinstall to update symlink
+          for (const agentType of options.agents) {
+            await installSkillFromRepoForAgent(skill, agentType, {
+              global: true,
+            });
+          }
+          moved.push(skill.name);
+        }
+      } catch {
+        // Symlink doesn't exist or can't be read — reinstall
+        for (const agentType of options.agents) {
+          await installSkillFromRepoForAgent(skill, agentType, { global: true });
+        }
+        moved.push(skill.name);
+      }
+    }
+  }
+
+  return { added, removed, moved };
 }
