@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, mkdir, writeFile, access } from 'fs/promises';
-import { join } from 'path';
+import { access, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
-import { reconcileRepoSkills } from '../src/reconcile.ts';
-import type { ReconcileLock } from '../src/reconcile.ts';
+import { dirname, join, relative, resolve } from 'path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getCanonicalPath } from '../src/installer.ts';
+import type { ReconcileLock } from '../src/reconcile.ts';
+import { reconcileRepoSkills } from '../src/reconcile.ts';
 
 /**
  * Helper: create a skill directory with a valid SKILL.md inside a repo checkout.
@@ -170,7 +170,10 @@ describe('reconcileRepoSkills', () => {
     const lock = buildLock(repoPath, ['skill-a', 'skill-b']);
 
     // Pre-create the canonical path for skill-b under the temp dir so we can verify removal
-    const canonicalPath = getCanonicalPath('skill-b', { global: false, cwd: tempDir });
+    const canonicalPath = getCanonicalPath('skill-b', {
+      global: false,
+      cwd: tempDir,
+    });
     await mkdir(canonicalPath, { recursive: true });
     await writeFile(join(canonicalPath, 'SKILL.md'), 'placeholder', 'utf-8');
 
@@ -184,5 +187,56 @@ describe('reconcileRepoSkills', () => {
     // verify the lock state instead)
     expect(lock.skills['skill-b']).toBeUndefined();
     expect(lock.repos![repoPath].skills).not.toContain('skill-b');
+  });
+
+  it('skill moved to different directory — updates symlink', async () => {
+    // Skill exists at new location: plugins/core/skills/my-skill
+    const newSkillDir = join(repoDir, 'plugins', 'core', 'skills', 'my-skill');
+    await mkdir(newSkillDir, { recursive: true });
+    await writeFile(
+      join(newSkillDir, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: Test skill\n---\n# my-skill\n',
+      'utf-8'
+    );
+
+    const lock = buildLock(repoPath, ['my-skill']);
+
+    // Pre-create the canonical symlink pointing to the OLD path
+    const oldSkillDir = join(repoDir, 'skills', 'my-skill');
+    await mkdir(oldSkillDir, { recursive: true });
+    await writeFile(
+      join(oldSkillDir, 'SKILL.md'),
+      '---\nname: my-skill\ndescription: Test skill\n---\n# my-skill\n',
+      'utf-8'
+    );
+
+    const canonicalPath = getCanonicalPath('my-skill', { global: true });
+    // Ensure parent directory exists
+    await mkdir(dirname(canonicalPath), { recursive: true });
+    // Remove any existing entry (from prior test runs)
+    await rm(canonicalPath, { recursive: true, force: true });
+    // Create a symlink pointing to the old path
+    const relTarget = relative(dirname(canonicalPath), oldSkillDir);
+    await symlink(relTarget, canonicalPath);
+
+    // Verify symlink points to old path
+    const beforeTarget = await readlink(canonicalPath);
+    const resolvedBefore = resolve(dirname(canonicalPath), beforeTarget);
+    expect(resolvedBefore).toBe(resolve(oldSkillDir));
+
+    // Now remove the old skill dir so only the new location exists in discovery
+    await rm(join(repoDir, 'skills'), { recursive: true, force: true });
+
+    const result = await reconcileRepoSkills(repoPath, repoDir, lock, defaultOpts);
+
+    // Should detect the move
+    expect(result.moved).toContain('my-skill');
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+
+    // Canonical symlink should now point to the new path
+    const afterTarget = await readlink(canonicalPath);
+    const resolvedAfter = resolve(dirname(canonicalPath), afterTarget);
+    expect(resolvedAfter).toBe(resolve(newSkillDir));
   });
 });

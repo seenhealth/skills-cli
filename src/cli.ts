@@ -1,26 +1,26 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'child_process';
-import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'fs';
-import { basename, join, dirname } from 'path';
-import { homedir } from 'os';
 import { createHash } from 'crypto';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
+import { basename, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { runAdd, parseAddOptions, initTelemetry } from './add.ts';
+import { initTelemetry, parseAddOptions, runAdd } from './add.ts';
+import { agents as agentConfigs, detectInstalledAgents } from './agents.ts';
+import { getReposDir } from './constants.ts';
 import { runFind } from './find.ts';
+import { getRepoCheckoutPath, getRepoHeadHash, pullRepo } from './git.ts';
 import { runList } from './list.ts';
-import { removeCommand, parseRemoveOptions } from './remove.ts';
-import { track } from './telemetry.ts';
+import { reconcileRepoSkills } from './reconcile.ts';
+import { parseRemoveOptions, removeCommand } from './remove.ts';
 import {
   fetchSkillFolderHash,
   getGitHubToken,
   getOrphanedRepos,
   removeRepoFromLock,
 } from './skill-lock.ts';
-import { pullRepo, getRepoCheckoutPath, getRepoHeadHash } from './git.ts';
-import { getReposDir } from './constants.ts';
-import { reconcileRepoSkills } from './reconcile.ts';
-import { detectInstalledAgents, agents as agentConfigs } from './agents.ts';
+import { track } from './telemetry.ts';
 import type { AgentType } from './types.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -542,7 +542,7 @@ async function runUpdate(): Promise<void> {
         const reconcileAgents =
           lock.lastSelectedAgents?.filter((a): a is AgentType => a in agentConfigs) ??
           (await detectInstalledAgents());
-        const { added, removed } = await reconcileRepoSkills(repoPath, checkoutPath, lock, {
+        const { added, removed, moved } = await reconcileRepoSkills(repoPath, checkoutPath, lock, {
           sourceUrl: firstEntry.sourceUrl,
           sourceType: firstEntry.sourceType,
           ref: firstEntry.ref,
@@ -558,8 +558,13 @@ async function runUpdate(): Promise<void> {
             console.log(`  ${TEXT}-${RESET} Removed ${name}`);
           }
         }
+        if (moved.length > 0) {
+          for (const name of moved) {
+            console.log(`  ${TEXT}~${RESET} Moved ${name}`);
+          }
+        }
 
-        if (added.length > 0 || removed.length > 0 || repoChanged) {
+        if (added.length > 0 || removed.length > 0 || moved.length > 0 || repoChanged) {
           writeSkillLock(lock);
         } else {
           console.log(
@@ -576,7 +581,11 @@ async function runUpdate(): Promise<void> {
   if (legacySkills.length > 0) {
     const token = getGitHubToken();
 
-    const updates: Array<{ name: string; source: string; entry: SkillLockEntry }> = [];
+    const updates: Array<{
+      name: string;
+      source: string;
+      entry: SkillLockEntry;
+    }> = [];
     for (const { name, entry } of legacySkills) {
       try {
         const latestHash = await fetchSkillFolderHash(entry.source, entry.skillPath!, token);
@@ -790,7 +799,7 @@ async function main(): Promise<void> {
     }
     case 'remove':
     case 'rm':
-    case 'r':
+    case 'r': {
       // Check for --help or -h flag
       if (restArgs.includes('--help') || restArgs.includes('-h')) {
         showRemoveHelp();
@@ -799,6 +808,7 @@ async function main(): Promise<void> {
       const { skills, options: removeOptions } = parseRemoveOptions(restArgs);
       await removeCommand(skills, removeOptions);
       break;
+    }
     case 'list':
     case 'ls':
       await runList(restArgs);
