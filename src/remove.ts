@@ -4,7 +4,7 @@ import { readdir, rm, lstat } from 'fs/promises';
 import { join } from 'path';
 import { agents, detectInstalledAgents } from './agents.ts';
 import { track } from './telemetry.ts';
-import { removeSkillFromLock, getSkillFromLock, removeSkillFromRepo } from './skill-lock.ts';
+import { removeSkillFromLock, getSkillFromLock, excludeSkillFromRepo } from './skill-lock.ts';
 import type { AgentType } from './types.ts';
 import { getInstallPath, getCanonicalPath, getCanonicalSkillsDir } from './installer.ts';
 
@@ -28,7 +28,7 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
     try {
       const entries = await readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory()) {
+        if (entry.isDirectory() || entry.isSymbolicLink()) {
           skillNamesSet.add(entry.name);
         }
       }
@@ -178,7 +178,8 @@ export async function removeCommand(skillNames: string[], options: RemoveOptions
       if (isGlobal) {
         if (lockEntry?.repoPath) {
           try {
-            await removeSkillFromRepo(lockEntry.repoPath, skillName);
+            // excludeSkillFromRepo also removes from repo.skills in one atomic write
+            await excludeSkillFromRepo(lockEntry.repoPath, skillName);
           } catch {
             // Don't fail removal if repo tracking update fails
           }
