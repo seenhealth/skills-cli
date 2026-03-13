@@ -189,6 +189,56 @@ describe('reconcileRepoSkills', () => {
     expect(lock.repos![repoPath].skills).not.toContain('skill-b');
   });
 
+  it('excluded skill is not re-added by reconcile', async () => {
+    await createSkillInRepo(repoDir, 'skill-a');
+    await createSkillInRepo(repoDir, 'skill-b');
+
+    // skill-b is tracked, skill-a is excluded (user removed it)
+    const lock = buildLock(repoPath, ['skill-b']);
+    lock.repos![repoPath].excluded = ['skill-a'];
+
+    const result = await reconcileRepoSkills(repoPath, repoDir, lock, defaultOpts);
+
+    // skill-a should NOT be added back
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(lock.skills['skill-a']).toBeUndefined();
+  });
+
+  it('re-installing a previously excluded skill allows reconcile to add it', async () => {
+    await createSkillInRepo(repoDir, 'skill-a');
+    await createSkillInRepo(repoDir, 'skill-b');
+
+    // skill-a is excluded, skill-b is tracked
+    const lock = buildLock(repoPath, ['skill-b']);
+    lock.repos![repoPath].excluded = ['skill-a'];
+
+    // First reconcile — skill-a should stay excluded
+    const result1 = await reconcileRepoSkills(repoPath, repoDir, lock, defaultOpts);
+    expect(result1.added).toEqual([]);
+    expect(lock.skills['skill-a']).toBeUndefined();
+
+    // Simulate re-install by clearing the exclusion and adding to tracked
+    lock.repos![repoPath].excluded = [];
+    lock.repos![repoPath].skills.push('skill-a');
+    lock.skills['skill-a'] = {
+      source: repoPath,
+      sourceType: 'github',
+      sourceUrl: 'https://github.com/test/repo',
+      skillFolderHash: '',
+      installedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      installMethod: 'repo-symlink',
+      repoPath,
+    };
+
+    // Second reconcile — skill-a should remain (not removed, not re-added)
+    const result2 = await reconcileRepoSkills(repoPath, repoDir, lock, defaultOpts);
+    expect(result2.added).toEqual([]);
+    expect(result2.removed).toEqual([]);
+    expect(lock.skills['skill-a']).toBeDefined();
+  });
+
   it('skill moved to different directory — updates symlink', async () => {
     // Skill exists at new location: plugins/core/skills/my-skill
     const newSkillDir = join(repoDir, 'plugins', 'core', 'skills', 'my-skill');
@@ -238,5 +288,116 @@ describe('reconcileRepoSkills', () => {
     const afterTarget = await readlink(canonicalPath);
     const resolvedAfter = resolve(dirname(canonicalPath), afterTarget);
     expect(resolvedAfter).toBe(resolve(newSkillDir));
+  });
+
+  describe('collision detection', () => {
+    const repoPathA = 'github.com/test/repo-a';
+    const repoPathB = 'github.com/test/repo-b';
+
+    it('collision detected — skill exists in different repo', async () => {
+      await createSkillInRepo(repoDir, 'skill-a');
+
+      // Lock already has skill-a from repo-a
+      const lock = buildLock(repoPathA, ['skill-a'], {
+        sourceUrl: 'https://github.com/test/repo-a',
+      });
+      // Add repo-b entry with no skills yet
+      lock.repos![repoPathB] = {
+        url: 'https://github.com/test/repo-b',
+        skills: [],
+        lastFetched: new Date().toISOString(),
+      };
+
+      const result = await reconcileRepoSkills(repoPathB, repoDir, lock, {
+        sourceUrl: 'https://github.com/test/repo-b',
+        sourceType: 'github',
+        agents: ['claude-code' as const],
+      });
+
+      // Should detect collision, not add
+      expect(result.collisions).toHaveLength(1);
+      expect(result.collisions[0]!.skillName).toBe('skill-a');
+      expect(result.collisions[0]!.existingRepoPath).toBe(repoPathA);
+      expect(result.collisions[0]!.newRepoPath).toBe(repoPathB);
+      expect(result.added).not.toContain('skill-a');
+      // Lock should still point to repo-a
+      expect(lock.skills['skill-a'].repoPath).toBe(repoPathA);
+    });
+
+    it('non-colliding skills still install alongside collisions', async () => {
+      await createSkillInRepo(repoDir, 'skill-a');
+      await createSkillInRepo(repoDir, 'skill-c');
+
+      // Lock has skill-a from repo-a
+      const lock = buildLock(repoPathA, ['skill-a'], {
+        sourceUrl: 'https://github.com/test/repo-a',
+      });
+      lock.repos![repoPathB] = {
+        url: 'https://github.com/test/repo-b',
+        skills: [],
+        lastFetched: new Date().toISOString(),
+      };
+
+      const result = await reconcileRepoSkills(repoPathB, repoDir, lock, {
+        sourceUrl: 'https://github.com/test/repo-b',
+        sourceType: 'github',
+        agents: ['claude-code' as const],
+      });
+
+      // skill-a is a collision, skill-c should be added normally
+      expect(result.collisions).toHaveLength(1);
+      expect(result.collisions[0]!.skillName).toBe('skill-a');
+      expect(result.added).toContain('skill-c');
+      expect(result.added).not.toContain('skill-a');
+      expect(lock.skills['skill-c']).toBeDefined();
+      expect(lock.skills['skill-c'].repoPath).toBe(repoPathB);
+    });
+
+    it('no collision for same repo', async () => {
+      await createSkillInRepo(repoDir, 'skill-a');
+      await createSkillInRepo(repoDir, 'skill-b');
+
+      // Lock already tracks skill-a under same repo
+      const lock = buildLock(repoPath, ['skill-a']);
+      const result = await reconcileRepoSkills(repoPath, repoDir, lock, defaultOpts);
+
+      // No collision — skill-a is already tracked, skill-b is new
+      expect(result.collisions).toHaveLength(0);
+      expect(result.added).toEqual(['skill-b']);
+    });
+
+    it('no collision for legacy installs without repoPath', async () => {
+      await createSkillInRepo(repoDir, 'skill-a');
+
+      // Lock has skill-a but without repoPath (legacy copy-based install)
+      const lock: ReconcileLock = {
+        version: 4,
+        skills: {
+          'skill-a': {
+            source: 'https://github.com/test/legacy',
+            sourceType: 'github',
+            sourceUrl: 'https://github.com/test/legacy',
+            skillFolderHash: 'abc123',
+            installedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            installMethod: 'copy',
+            // no repoPath
+          },
+        },
+        repos: {
+          [repoPath]: {
+            url: 'https://github.com/test/repo',
+            skills: [],
+            lastFetched: new Date().toISOString(),
+          },
+        },
+      };
+
+      const result = await reconcileRepoSkills(repoPath, repoDir, lock, defaultOpts);
+
+      // No collision — legacy install has no repoPath
+      expect(result.collisions).toHaveLength(0);
+      expect(result.added).toContain('skill-a');
+    });
   });
 });

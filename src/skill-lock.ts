@@ -52,6 +52,8 @@ export interface RepoEntry {
   lastFetched: string;
   /** Git HEAD hash at last successful update/install */
   headHash?: string;
+  /** Skill names explicitly excluded (removed by user) — reconcile won't re-add these */
+  excluded?: string[];
 }
 
 /**
@@ -393,9 +395,11 @@ export async function addRepoToLock(
     lock.repos = {};
   }
 
-  const mergedSkills = Array.from(
-    new Set([...(lock.repos[normalizedUrl]?.skills ?? []), ...skillNames])
-  );
+  const existing = lock.repos[normalizedUrl];
+  const mergedSkills = Array.from(new Set([...(existing?.skills ?? []), ...skillNames]));
+
+  // Clear exclusions for skills that are being explicitly re-installed
+  const excluded = (existing?.excluded ?? []).filter((s) => !skillNames.includes(s));
 
   lock.repos[normalizedUrl] = {
     url: entry.url,
@@ -403,6 +407,7 @@ export async function addRepoToLock(
     skills: mergedSkills,
     lastFetched: new Date().toISOString(),
     headHash: entry.headHash,
+    ...(excluded.length > 0 && { excluded }),
   };
 
   await writeSkillLock(lock);
@@ -419,6 +424,34 @@ export async function removeSkillFromRepo(normalizedUrl: string, skillName: stri
   lock.repos[normalizedUrl].skills = lock.repos[normalizedUrl].skills.filter(
     (s) => s !== skillName
   );
+
+  await writeSkillLock(lock);
+}
+
+/**
+ * Add a skill to a repo's exclusion list and remove it from the skills list
+ * so reconcile won't re-add it. Combines both operations in a single
+ * read/write to avoid race conditions with removeSkillFromRepo.
+ */
+export async function excludeSkillFromRepo(
+  normalizedUrl: string,
+  skillName: string
+): Promise<void> {
+  const lock = await readSkillLock();
+  if (!lock.repos?.[normalizedUrl]) return;
+
+  const repo = lock.repos[normalizedUrl];
+
+  // Remove from skills list (same as removeSkillFromRepo)
+  repo.skills = repo.skills.filter((s) => s !== skillName);
+
+  // Add to exclusion list
+  if (!repo.excluded) {
+    repo.excluded = [];
+  }
+  if (!repo.excluded.includes(skillName)) {
+    repo.excluded.push(skillName);
+  }
 
   await writeSkillLock(lock);
 }

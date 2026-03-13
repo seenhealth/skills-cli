@@ -1827,6 +1827,57 @@ export async function runAdd(args: string[], options: AddOptions = {}): Promise<
 
     const cwd = process.cwd();
 
+    // Check for skill name collisions across repos (global repo installs only)
+    if (installGlobally && useRepoCheckout) {
+      const { readSkillLock } = await import('./skill-lock.ts');
+      const currentLock = await readSkillLock();
+      const normalizedGitUrlForCollision = normalizeGitUrl(parsed.url);
+
+      const conflicting = selectedSkills.filter((skill) => {
+        const existing = currentLock.skills[skill.name];
+        return existing?.repoPath && existing.repoPath !== normalizedGitUrlForCollision;
+      });
+
+      if (conflicting.length > 0) {
+        if (!options.yes) {
+          for (const skill of conflicting) {
+            const existing = currentLock.skills[skill.name]!;
+            p.log.warn(`Skill "${skill.name}" already installed from ${existing.repoPath}`);
+          }
+
+          const collisionChoice = await p.select({
+            message: `${conflicting.length} skill(s) conflict with existing installs`,
+            options: [
+              { value: 'overwrite', label: 'Overwrite all conflicting skills' },
+              { value: 'skip', label: 'Skip conflicting skills' },
+              { value: 'cancel', label: 'Cancel installation' },
+            ],
+          });
+
+          if (p.isCancel(collisionChoice) || collisionChoice === 'cancel') {
+            p.cancel('Installation cancelled');
+            await cleanup(tempDir);
+            process.exit(0);
+          }
+
+          if (collisionChoice === 'skip') {
+            const conflictingNames = new Set(conflicting.map((s) => s.name));
+            selectedSkills = selectedSkills.filter((s) => !conflictingNames.has(s.name));
+            if (selectedSkills.length === 0) {
+              p.log.info('No skills remaining after skipping conflicts.');
+              await cleanup(tempDir);
+              return;
+            }
+          }
+        } else {
+          for (const skill of conflicting) {
+            const existing = currentLock.skills[skill.name]!;
+            p.log.warn(`Overwriting "${skill.name}" (previously from ${existing.repoPath})`);
+          }
+        }
+      }
+    }
+
     // Build installation summary
     const summaryLines: string[] = [];
     const agentNames = targetAgents.map((a) => agents[a].displayName);

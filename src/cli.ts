@@ -542,12 +542,17 @@ async function runUpdate(): Promise<void> {
         const reconcileAgents =
           lock.lastSelectedAgents?.filter((a): a is AgentType => a in agentConfigs) ??
           (await detectInstalledAgents());
-        const { added, removed, moved } = await reconcileRepoSkills(repoPath, checkoutPath, lock, {
-          sourceUrl: firstEntry.sourceUrl,
-          sourceType: firstEntry.sourceType,
-          ref: firstEntry.ref,
-          agents: reconcileAgents,
-        });
+        const { added, removed, moved, collisions } = await reconcileRepoSkills(
+          repoPath,
+          checkoutPath,
+          lock,
+          {
+            sourceUrl: firstEntry.sourceUrl,
+            sourceType: firstEntry.sourceType,
+            ref: firstEntry.ref,
+            agents: reconcileAgents,
+          }
+        );
         if (added.length > 0) {
           for (const name of added) {
             console.log(`  ${TEXT}+${RESET} Added ${name}`);
@@ -564,7 +569,101 @@ async function runUpdate(): Promise<void> {
           }
         }
 
-        if (added.length > 0 || removed.length > 0 || moved.length > 0 || repoChanged) {
+        // Handle skill name collisions across repos
+        let collisionsResolved = false;
+        if (collisions.length > 0) {
+          if (!process.stdin.isTTY) {
+            for (const c of collisions) {
+              console.log(
+                `  ${TEXT}⚠${RESET} Collision: ${c.skillName} exists in ${c.existingRepoPath}, skipping from ${c.newRepoPath}`
+              );
+            }
+          } else {
+            const p = await import('@clack/prompts');
+            const { installSkillFromRepoForAgent } = await import('./installer.ts');
+
+            // Discover once, reuse for all "replace" resolutions
+            let discoveredCache:
+              | Awaited<ReturnType<(typeof import('./skills.ts'))['discoverSkills']>>
+              | undefined;
+
+            for (const c of collisions) {
+              const choice = await p.select({
+                message: `Skill "${c.skillName}" exists in ${c.existingRepoPath}. Also found in ${c.newRepoPath}.`,
+                options: [
+                  { value: 'keep', label: `Keep existing (from ${c.existingRepoPath})` },
+                  { value: 'replace', label: `Replace with version from ${c.newRepoPath}` },
+                  { value: 'skip', label: 'Skip (decide later)' },
+                ],
+              });
+
+              if (p.isCancel(choice)) continue;
+
+              if (choice === 'keep') {
+                // Add to new repo's excluded list
+                if (lock.repos?.[c.newRepoPath]) {
+                  if (!lock.repos[c.newRepoPath].excluded) {
+                    lock.repos[c.newRepoPath].excluded = [];
+                  }
+                  if (!lock.repos[c.newRepoPath].excluded!.includes(c.skillName)) {
+                    lock.repos[c.newRepoPath].excluded!.push(c.skillName);
+                  }
+                }
+                collisionsResolved = true;
+              } else if (choice === 'replace') {
+                // Remove from old repo's skills list
+                if (lock.repos?.[c.existingRepoPath]) {
+                  lock.repos[c.existingRepoPath].skills = lock.repos[
+                    c.existingRepoPath
+                  ].skills.filter((s) => s !== c.skillName);
+                }
+
+                // Install from new repo
+                if (!discoveredCache) {
+                  const { discoverSkills } = await import('./skills.ts');
+                  discoveredCache = await discoverSkills(checkoutPath, undefined, {
+                    fullDepth: true,
+                  });
+                }
+                const skill = discoveredCache.find((s) => s.name === c.skillName);
+                if (skill) {
+                  for (const agentType of reconcileAgents) {
+                    await installSkillFromRepoForAgent(skill, agentType, { global: true });
+                  }
+
+                  const now = new Date().toISOString();
+                  lock.skills[c.skillName] = {
+                    source: c.newRepoPath,
+                    sourceType: firstEntry.sourceType,
+                    sourceUrl: c.newSourceUrl,
+                    skillFolderHash: '',
+                    installedAt: now,
+                    updatedAt: now,
+                    ref: firstEntry.ref,
+                    installMethod: 'repo-symlink',
+                    repoPath: c.newRepoPath,
+                  };
+
+                  if (lock.repos?.[c.newRepoPath]) {
+                    if (!lock.repos[c.newRepoPath].skills.includes(c.skillName)) {
+                      lock.repos[c.newRepoPath].skills.push(c.skillName);
+                    }
+                  }
+                }
+                collisionsResolved = true;
+              }
+              // 'skip' — no changes
+            }
+          }
+        }
+
+        if (
+          added.length > 0 ||
+          removed.length > 0 ||
+          moved.length > 0 ||
+          collisionsResolved ||
+          repoChanged
+        ) {
           writeSkillLock(lock);
         } else {
           console.log(

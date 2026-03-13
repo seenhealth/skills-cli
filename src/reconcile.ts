@@ -28,6 +28,7 @@ export interface ReconcileRepoEntry {
   skills: string[];
   lastFetched: string;
   headHash?: string;
+  excluded?: string[];
 }
 
 export interface ReconcileLock {
@@ -36,10 +37,19 @@ export interface ReconcileLock {
   repos?: Record<string, ReconcileRepoEntry>;
 }
 
+export interface SkillCollision {
+  skillName: string;
+  existingRepoPath: string;
+  existingSourceUrl: string;
+  newRepoPath: string;
+  newSourceUrl: string;
+}
+
 export interface ReconcileResult {
   added: string[];
   removed: string[];
   moved: string[];
+  collisions: SkillCollision[];
 }
 
 /**
@@ -70,8 +80,11 @@ export async function reconcileRepoSkills(
 
   // 3. Compute diff
   const trackedSet = new Set(trackedSkills);
+  const excludedSet = new Set(lock.repos?.[repoPath]?.excluded ?? []);
   const removed = trackedSkills.filter((name) => !discoveredNames.has(name));
-  const added = discoveredSkills.filter((s) => !trackedSet.has(s.name)).map((s) => s.name);
+  const added = discoveredSkills
+    .filter((s) => !trackedSet.has(s.name) && !excludedSet.has(s.name))
+    .map((s) => s.name);
 
   // 4. Handle removed skills
   for (const skillName of removed) {
@@ -106,8 +119,23 @@ export async function reconcileRepoSkills(
   }
 
   // 5. Handle added skills
+  const collisions: SkillCollision[] = [];
+  const installedAdded: string[] = [];
   const now = new Date().toISOString();
   for (const skillName of added) {
+    // Check for collision: skill exists in lock under a different repo
+    const existing = lock.skills[skillName];
+    if (existing?.repoPath && existing.repoPath !== repoPath) {
+      collisions.push({
+        skillName,
+        existingRepoPath: existing.repoPath,
+        existingSourceUrl: existing.sourceUrl,
+        newRepoPath: repoPath,
+        newSourceUrl: options.sourceUrl,
+      });
+      continue;
+    }
+
     const skill = discoveredSkills.find((s) => s.name === skillName)!;
 
     // Install for each agent
@@ -134,6 +162,8 @@ export async function reconcileRepoSkills(
         lock.repos[repoPath].skills.push(skillName);
       }
     }
+
+    installedAdded.push(skillName);
   }
 
   // 6. Handle moved skills (same name, different path in repo)
@@ -164,5 +194,5 @@ export async function reconcileRepoSkills(
     }
   }
 
-  return { added, removed, moved };
+  return { added: installedAdded, removed, moved, collisions };
 }
