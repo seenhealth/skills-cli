@@ -67,6 +67,8 @@ export async function reconcileRepoSkills(
     sourceType: string;
     ref?: string;
     agents: AgentType[];
+    /** When true, only reconcile tracked skills (removals/moves) — do not add new ones. */
+    skipNewSkills?: boolean;
   }
 ): Promise<ReconcileResult> {
   // 1. Get tracked skill names from lock
@@ -82,9 +84,11 @@ export async function reconcileRepoSkills(
   const trackedSet = new Set(trackedSkills);
   const excludedSet = new Set(lock.repos?.[repoPath]?.excluded ?? []);
   const removed = trackedSkills.filter((name) => !discoveredNames.has(name));
-  const added = discoveredSkills
-    .filter((s) => !trackedSet.has(s.name) && !excludedSet.has(s.name))
-    .map((s) => s.name);
+  const added = options.skipNewSkills
+    ? []
+    : discoveredSkills
+        .filter((s) => !trackedSet.has(s.name) && !excludedSet.has(s.name))
+        .map((s) => s.name);
 
   // 4. Handle removed skills
   for (const skillName of removed) {

@@ -551,6 +551,7 @@ async function runUpdate(): Promise<void> {
             sourceType: firstEntry.sourceType,
             ref: firstEntry.ref,
             agents: reconcileAgents,
+            skipNewSkills: true,
           }
         );
         if (added.length > 0) {

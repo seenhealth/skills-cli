@@ -164,6 +164,36 @@ describe('reconcileRepoSkills', () => {
     expect(lock.repos![repoPath].skills).toEqual(['skill-a']);
   });
 
+  it('skipNewSkills — does not add new skills from repo', async () => {
+    await createSkillInRepo(repoDir, 'skill-a');
+    await createSkillInRepo(repoDir, 'skill-b');
+
+    const lock = buildLock(repoPath, ['skill-a']);
+    const result = await reconcileRepoSkills(repoPath, repoDir, lock, {
+      ...defaultOpts,
+      skipNewSkills: true,
+    });
+
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual([]);
+    expect(lock.skills['skill-b']).toBeUndefined();
+    expect(lock.repos![repoPath].skills).toEqual(['skill-a']);
+  });
+
+  it('skipNewSkills — still removes deleted skills', async () => {
+    await createSkillInRepo(repoDir, 'skill-a');
+
+    const lock = buildLock(repoPath, ['skill-a', 'skill-b']);
+    const result = await reconcileRepoSkills(repoPath, repoDir, lock, {
+      ...defaultOpts,
+      skipNewSkills: true,
+    });
+
+    expect(result.added).toEqual([]);
+    expect(result.removed).toEqual(['skill-b']);
+    expect(lock.skills['skill-b']).toBeUndefined();
+  });
+
   it('symlink cleanup — canonical dir is removed for deleted skill', async () => {
     await createSkillInRepo(repoDir, 'skill-a');
 
